@@ -6,7 +6,7 @@
   "properties": {
     "enabled": {
       "type": "boolean",
-      "default": true,
+      "default": false,
       "description": "Enable or disable the odds ticker plugin"
     },
     "display_duration": {
@@ -15,32 +15,6 @@
       "minimum": 10,
       "maximum": 300,
       "description": "Duration in seconds to display the odds ticker"
-    },
-    "update_interval_seconds": {
-      "type": "integer",
-      "default": 3600,
-      "minimum": 300,
-      "maximum": 86400,
-      "description": "How often to fetch new odds data (seconds)"
-    },
-    "scroll_speed": {
-      "type": "number",
-      "default": 2,
-      "minimum": 0.5,
-      "maximum": 10,
-      "description": "Scrolling speed multiplier"
-    },
-    "scroll_delay": {
-      "type": "number",
-      "default": 0.05,
-      "minimum": 0.01,
-      "maximum": 0.5,
-      "description": "Delay between scroll steps in seconds"
-    },
-    "show_channel_logos": {
-      "type": "boolean",
-      "default": true,
-      "description": "Show broadcast channel logos"
     },
     "show_favorite_teams_only": {
       "type": "boolean",
@@ -66,22 +40,175 @@
       "default": false,
       "description": "Show only odds, no game details"
     },
-    "fetch_odds": {
-      "type": "boolean",
-      "default": true,
-      "description": "Enable fetching of betting odds"
+    "sort_order": {
+      "type": "string",
+      "enum": ["soonest", "league", "team"],
+      "default": "soonest",
+      "description": "Sort order for displaying games"
     },
-    "future_fetch_days": {
+    "enabled_leagues": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["nfl", "nba", "mlb", "ncaa_fb", "ncaam_basketball", "nhl", "milb"],
+        "description": "League identifier"
+      },
+      "uniqueItems": true,
+      "default": ["nfl", "mlb", "ncaa_fb", "milb"],
+      "description": "List of enabled leagues for odds display"
+    },
+    "update_interval": {
       "type": "integer",
-      "default": 7,
+      "default": 3600,
+      "minimum": 300,
+      "maximum": 86400,
+      "description": "How often to fetch new odds data (seconds)"
+    },
+    "scroll_speed": {
+      "type": "number",
+      "default": 1,
+      "minimum": 0.1,
+      "maximum": 10,
+      "description": "Scrolling speed multiplier"
+    },
+    "scroll_delay": {
+      "type": "number",
+      "default": 0.01,
+      "minimum": 0.001,
+      "maximum": 0.1,
+      "description": "Delay between scroll steps in seconds"
+    },
+    "target_fps": {
+      "type": "integer",
+      "default": 100,
+      "minimum": 30,
+      "maximum": 200,
+      "description": "Target frames per second for scrolling"
+    },
+    "scroll_speed_scale": {
+      "type": "number",
+      "default": 8,
       "minimum": 1,
-      "maximum": 14,
-      "description": "Days ahead to fetch upcoming games"
+      "maximum": 20,
+      "description": "Scroll speed scale factor"
     },
     "loop": {
       "type": "boolean",
       "default": true,
       "description": "Continuously loop the ticker"
+    },
+    "future_fetch_days": {
+      "type": "integer",
+      "default": 50,
+      "minimum": 1,
+      "maximum": 90,
+      "description": "Days ahead to fetch upcoming games"
+    },
+    "show_channel_logos": {
+      "type": "boolean",
+      "default": true,
+      "description": "Show broadcast channel logos"
+    },
+    "dynamic_duration": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable dynamic duration based on content width"
+    },
+    "min_duration": {
+      "type": "integer",
+      "default": 30,
+      "minimum": 10,
+      "maximum": 300,
+      "description": "Minimum display duration when dynamic duration is enabled"
+    },
+    "max_duration": {
+      "type": "integer",
+      "default": 300,
+      "minimum": 30,
+      "maximum": 600,
+      "description": "Maximum display duration when dynamic duration is enabled"
+    },
+    "duration_buffer": {
+      "type": "number",
+      "default": 0.1,
+      "minimum": 0.01,
+      "maximum": 1.0,
+      "description": "Duration buffer for dynamic duration calculation"
+    },
+    "scroll_pixels_per_second": {
+      "type": "number",
+      "default": 18.0,
+      "minimum": 5.0,
+      "maximum": 50.0,
+      "description": "Scroll speed in pixels per second"
+    },
+    "scroll_target_fps": {
+      "type": "number",
+      "default": 100.0,
+      "minimum": 30.0,
+      "maximum": 200.0,
+      "description": "Target FPS for scrolling"
+    },
+    "scroll_mode": {
+      "type": "string",
+      "enum": ["one_shot", "continuous"],
+      "default": "one_shot",
+      "description": "Scrolling mode"
+    },
+    "scroll_direction": {
+      "type": "string",
+      "enum": ["left", "right"],
+      "default": "left",
+      "description": "Scroll direction"
+    },
+    "enable_scroll_metrics": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable scroll performance metrics"
+    },
+    "background_service": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable background service for data fetching"
+        },
+        "max_workers": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximum number of worker threads"
+        },
+        "request_timeout": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 120,
+          "description": "Request timeout in seconds"
+        },
+        "max_retries": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "Maximum number of retries for failed requests"
+        },
+        "priority": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Background service priority"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fetch_odds": {
+      "type": "boolean",
+      "default": true,
+      "description": "Enable fetching of betting odds"
     },
     "leagues": {
       "type": "object",
