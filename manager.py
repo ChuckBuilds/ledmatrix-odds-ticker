@@ -183,7 +183,10 @@ class OddsTickerPlugin(BasePlugin):
     def _fetch_league_odds(self, league_key: str, league_config: Dict) -> List[Dict]:
         """Fetch odds data for a specific league."""
         cache_key = f"odds_{league_key}_{datetime.now().strftime('%Y%m%d')}"
-        update_interval = self.global_config.get('update_interval_seconds', 3600)
+        try:
+            update_interval = int(self.global_config.get('update_interval_seconds', 3600))
+        except (ValueError, TypeError):
+            update_interval = 3600
 
         # Check cache first
         cached_data = self.cache_manager.get(cache_key)
