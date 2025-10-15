@@ -10,7 +10,7 @@
   "plugin_path": "plugins/odds-ticker",
   "versions": [
     {
-      "version": "1.0.0",
+      "version": "1.0.1",
       "ledmatrix_min": "2.0.0",
       "released": "2025-10-12",
       "download_url": "https://github.com/ChuckBuilds/ledmatrix-plugins/archive/refs/heads/main.zip"
