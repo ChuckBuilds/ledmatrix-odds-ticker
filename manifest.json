@@ -24,6 +24,7 @@
   "display_modes": [
     "odds_ticker"
   ],
+  "class_name": "OddsTickerPlugin",
   "dependencies": {
     "managers": [
       "odds_manager"

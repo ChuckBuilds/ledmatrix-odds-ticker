@@ -17,20 +17,36 @@ API Version: 1.0.0
 
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
-from pathlib import Path
-
-import requests
-from PIL import Image, ImageDraw
+from typing import Dict, Any
 
 from src.plugin_system.base_plugin import BasePlugin
 
 # Import odds manager for data access
 try:
-    from src.odds_manager import OddsManager
+    from src.old_managers.odds_manager import OddsManager
 except ImportError:
     OddsManager = None
+
+# Import background service and dynamic resolver
+try:
+    from src.background_data_service import get_background_service
+    from src.dynamic_team_resolver import DynamicTeamResolver
+except ImportError:
+    get_background_service = None
+    DynamicTeamResolver = None
+
+# Import our modular components
+import sys
+import os
+
+# Add the plugin directory to Python path for imports
+plugin_dir = os.path.dirname(os.path.abspath(__file__))
+if plugin_dir not in sys.path:
+    sys.path.insert(0, plugin_dir)
+
+from data_fetcher import OddsDataFetcher
+from odds_renderer import OddsRenderer
+from game_filter import GameFilter
 
 logger = logging.getLogger(__name__)
 
@@ -53,49 +69,52 @@ class OddsTickerPlugin(BasePlugin):
         """Initialize the odds ticker plugin."""
         super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
 
+        # Check required dependencies
         if OddsManager is None:
             self.logger.error("Failed to import OddsManager. Plugin will not function.")
             self.initialized = False
             return
 
+        if get_background_service is None or DynamicTeamResolver is None:
+            self.logger.error("Failed to import required services. Plugin will not function.")
+            self.initialized = False
+            return
+
         # Configuration
-        self.leagues = config.get('leagues', {})
         self.global_config = config
-
-        # Display settings
         self.display_duration = config.get('display_duration', 30)
-        self.scroll_speed = config.get('scroll_speed', 2)
-        self.scroll_delay = config.get('scroll_delay', 0.05)
-        self.show_favorite_teams_only = config.get('show_favorite_teams_only', False)
-        self.games_per_favorite_team = config.get('games_per_favorite_team', 1)
-        self.max_games_per_league = config.get('max_games_per_league', 5)
-        self.show_odds_only = config.get('show_odds_only', False)
-        self.future_fetch_days = config.get('future_fetch_days', 7)
+        self.update_interval = config.get('update_interval', 3600)
 
-        # Background service configuration (internal only)
-        self.background_config = {
-            'enabled': True,
-            'request_timeout': 30,
-            'max_retries': 3,
-            'priority': 2
-        }
+        # Initialize managers
+        self.odds_manager = OddsManager(self.cache_manager, None)
+        self.dynamic_resolver = DynamicTeamResolver()
+        
+        # Initialize background service with optimized settings
+        self.background_service = get_background_service(self.cache_manager, max_workers=1)
+        
+        # Initialize modular components
+        self.data_fetcher = OddsDataFetcher(
+            self.cache_manager, 
+            self.odds_manager, 
+            self.background_service,
+            self.dynamic_resolver,
+            config
+        )
+        
+        self.game_filter = GameFilter(config)
+        
+        self.odds_renderer = OddsRenderer(self.display_manager, config)
 
         # State
-        self.current_odds = []
-        self.scroll_position = 0
+        self.current_games = []
         self.last_update = 0
-        self.odds_manager = OddsManager(self.cache_manager, None)
         self.initialized = True
 
         # Register fonts
         self._register_fonts()
 
         # Log enabled leagues and their settings
-        enabled_leagues = []
-        for league_key, league_config in self.leagues.items():
-            if league_config.get('enabled', False):
-                enabled_leagues.append(league_key)
-
+        enabled_leagues = config.get('enabled_leagues', [])
         self.logger.info("Odds ticker plugin initialized")
         self.logger.info(f"Enabled leagues: {enabled_leagues}")
 
@@ -143,108 +162,49 @@ class OddsTickerPlugin(BasePlugin):
         if not self.initialized:
             return
 
+        current_time = time.time()
+        if current_time - self.last_update < self.update_interval:
+            self.logger.debug(f"Odds ticker update interval not reached. Next update in {self.update_interval - (current_time - self.last_update)} seconds")
+            return
+
         try:
-            self.current_odds = []
-
-            # Fetch odds for each enabled league
-            for league_key, league_config in self.leagues.items():
-                if league_config.get('enabled', False):
-                    odds_data = self._fetch_league_odds(league_key, league_config)
-                    if odds_data:
-                        # Add league info to each odds entry
-                        for odds in odds_data:
-                            odds['league_config'] = league_config
-                        self.current_odds.extend(odds_data)
-
-            # Sort odds by game time
-            self._sort_odds()
-
-            self.last_update = time.time()
-            self.logger.debug(f"Updated odds data: {len(self.current_odds)} games")
+            self.logger.debug("Updating odds ticker data")
+            
+            # Fetch upcoming games using data fetcher
+            all_games = self.data_fetcher.fetch_upcoming_games()
+            
+            # Filter games using game filter
+            filtered_games = self.game_filter.filter_games(all_games)
+            
+            # Fetch odds for each game
+            for game in filtered_games:
+                league = game.get('league', '')
+                odds_data = self.data_fetcher.fetch_game_odds(game, league)
+                if odds_data:
+                    game['odds'] = odds_data
+            
+            self.current_games = filtered_games
+            self.last_update = current_time
+            
+            # Create ticker image
+            self.odds_renderer.create_ticker_image(self.current_games)
+            
+            if self.current_games:
+                self.logger.info(f"Updated odds ticker with {len(self.current_games)} games")
+                for i, game in enumerate(self.current_games[:3]):  # Log first 3 games
+                    home_team = game.get('home_team', 'HOME')
+                    away_team = game.get('away_team', 'AWAY')
+                    start_time = game.get('start_time', '')
+                    self.logger.info(f"Game {i+1}: {away_team} @ {home_team} - {start_time}")
+            else:
+                self.logger.warning("No games found for odds ticker")
 
         except Exception as e:
-            self.logger.error(f"Error updating odds data: {e}")
-
-    def _sort_odds(self):
-        """Sort odds by game time."""
-        def sort_key(odds):
-            game_time = odds.get('game_time', '')
-            # Convert to timestamp for sorting
-            try:
-                if isinstance(game_time, str):
-                    # Simple string comparison for now
-                    return game_time
-                return 0
-            except:
-                return 0
-
-        self.current_odds.sort(key=sort_key)
-
-    def _fetch_league_odds(self, league_key: str, league_config: Dict) -> List[Dict]:
-        """Fetch odds data for a specific league."""
-        cache_key = f"odds_{league_key}_{datetime.now().strftime('%Y%m%d')}"
-        update_interval = self.global_config.get('update_interval_seconds', 3600)
-
-        # Check cache first
-        cached_data = self.cache_manager.get(cache_key)
-        if cached_data and (time.time() - self.last_update) < update_interval:
-            self.logger.debug(f"Using cached odds data for {league_key}")
-            return cached_data
-
-        # Fetch from odds manager
-        try:
-            # Get upcoming games for this league
-            games = self._get_upcoming_games(league_key, league_config)
-
-            odds_data = []
-            for game in games[:self.max_games_per_league]:
-                game_odds = self._get_game_odds(game, league_key, league_config)
-                if game_odds:
-                    odds_data.append(game_odds)
-
-            # Cache the results
-            self.cache_manager.set(cache_key, odds_data, ttl=update_interval * 2)
-
-            return odds_data
-
-        except Exception as e:
-            self.logger.error(f"Error fetching odds for {league_key}: {e}")
-            return []
-
-    def _get_upcoming_games(self, league_key: str, league_config: Dict) -> List[Dict]:
-        """Get upcoming games for a league (placeholder implementation)."""
-        # This would typically call the appropriate scoreboard API
-        # For now, return empty list as this would need integration with the main LEDMatrix
-        return []
-
-    def _get_game_odds(self, game: Dict, league_key: str, league_config: Dict) -> Optional[Dict]:
-        """Get odds for a specific game."""
-        try:
-            # Use odds manager to get odds data
-            # This is a simplified version - in practice would integrate with the main odds system
-            odds_info = {
-                'league': league_key,
-                'league_config': league_config,
-                'game_id': game.get('game_id', ''),
-                'home_team': game.get('home_team', {}),
-                'away_team': game.get('away_team', {}),
-                'game_time': game.get('start_time', ''),
-                'odds': {
-                    'spread': 'TBD',
-                    'moneyline': 'TBD',
-                    'total': 'TBD'
-                }
-            }
-
-            return odds_info
-
-        except Exception as e:
-            self.logger.error(f"Error getting game odds: {e}")
-            return None
+            self.logger.error(f"Error updating odds ticker: {e}", exc_info=True)
 
     def display(self, display_mode: str = None, force_clear: bool = False) -> None:
         """
-        Display scrolling odds ticker.
+        Display scrolling odds ticker with full original functionality.
 
         Args:
             display_mode: Should be 'odds_ticker'
@@ -254,102 +214,119 @@ class OddsTickerPlugin(BasePlugin):
             self._display_error("Odds ticker plugin not initialized")
             return
 
-        if not self.current_odds:
-            self._display_no_odds()
+        # Start display session with proper timing
+        self.odds_renderer.start_display_session(force_clear)
+        
+        self.logger.debug("Entering display method")
+        self.logger.debug(f"Odds ticker enabled: {self.enabled}")
+        self.logger.debug(f"Current scroll position: {self.odds_renderer.scroll_position}")
+        self.logger.debug(f"Ticker image width: {self.odds_renderer.ticker_image.width if self.odds_renderer.ticker_image else 'None'}")
+        self.logger.debug(f"Dynamic duration: {self.odds_renderer.dynamic_duration}s")
+        
+        if not self.enabled:
+            self.logger.debug("Odds ticker is disabled, exiting display method.")
             return
+        
+        self.logger.debug(f"Number of games in data at start of display method: {len(self.current_games)}")
+        if not self.current_games:
+            self.logger.warning("Odds ticker has no games data. Attempting to update...")
+            try:
+                import threading
+                import queue
+                
+                update_queue = queue.Queue()
+                
+                def perform_update():
+                    try:
+                        self.update()
+                        update_queue.put(('success', None))
+                    except Exception as e:
+                        update_queue.put(('error', e))
+                
+                # Start update in a separate thread with 10-second timeout
+                update_thread = threading.Thread(target=perform_update)
+                update_thread.daemon = True
+                update_thread.start()
+                
+                try:
+                    result_type, result_data = update_queue.get(timeout=10)
+                    if result_type == 'error':
+                        self.logger.error(f"Update failed: {result_data}")
+                except queue.Empty:
+                    self.logger.warning("Update timed out after 10 seconds, using fallback")
+                
+            except Exception as e:
+                self.logger.error(f"Error during update: {e}")
+            
+            if not self.current_games:
+                self.logger.warning("Still no games data after update. Displaying fallback message.")
+                self.odds_renderer._display_fallback_message()
+                return
+        
+        if self.odds_renderer.ticker_image is None:
+            self.logger.warning("Ticker image is not available. Attempting to create it.")
+            try:
+                # Create the ticker image directly (no threading needed for this)
+                ticker_img = self.odds_renderer.create_ticker_image(self.current_games)
+                if ticker_img is None:
+                    self.logger.error("Failed to create ticker image.")
+                    self.odds_renderer._display_fallback_message()
+                    return
+                
+            except Exception as e:
+                self.logger.error(f"Error during image creation: {e}")
+                self.odds_renderer._display_fallback_message()
+                return
 
-        # Display scrolling ticker
-        self._display_scrolling_odds()
-
-    def _display_scrolling_odds(self):
-        """Display scrolling odds ticker."""
-        try:
-            matrix_width = self.display_manager.matrix.width
-            matrix_height = self.display_manager.matrix.height
-
-            # Create base image
-            img = Image.new('RGB', (matrix_width, matrix_height), (0, 0, 0))
-            draw = ImageDraw.Draw(img)
-
-            # For now, display first set of odds (placeholder for scrolling implementation)
-            if self.current_odds:
-                odds = self.current_odds[0]
-
-                # TODO: Implement scrolling ticker display
-                # TODO: Show team names, odds, and channel logos
-                # TODO: Use font manager for text rendering
-
-                home_team = odds.get('home_team', {})
-                away_team = odds.get('away_team', {})
-
-                # Simple placeholder display
-                draw.text((5, 5), f"{away_team.get('abbrev', 'AWAY')} @ {home_team.get('abbrev', 'HOME')}",
-                         fill=(255, 255, 255))
-                draw.text((5, 15), "Odds: TBD", fill=(255, 200, 0))
-
-            self.display_manager.image = img.copy()
-            self.display_manager.update_display()
-
-        except Exception as e:
-            self.logger.error(f"Error displaying odds ticker: {e}")
-            self._display_error("Display error")
+        # Display scrolling ticker using enhanced renderer
+        success = self.odds_renderer.render_scrolling_ticker(self.odds_renderer.ticker_image)
+        
+        if not success and not self.odds_renderer.loop:
+            # End of ticker reached
+            self.logger.debug("Ticker display completed")
 
     def _display_no_odds(self):
         """Display message when no odds are available."""
-        img = Image.new('RGB', (self.display_manager.matrix.width,
-                               self.display_manager.matrix.height),
-                       (0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        draw.text((5, 12), "No Odds Available", fill=(150, 150, 150))
-
+        img = self.odds_renderer._create_no_data_image()
         self.display_manager.image = img.copy()
         self.display_manager.update_display()
 
     def _display_error(self, message: str):
         """Display error message."""
-        img = Image.new('RGB', (self.display_manager.matrix.width,
-                               self.display_manager.matrix.height),
-                       (0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        draw.text((5, 12), message, fill=(255, 0, 0))
-
+        img = self.odds_renderer._create_error_image(message)
         self.display_manager.image = img.copy()
         self.display_manager.update_display()
 
     def get_display_duration(self) -> float:
         """Get display duration from config."""
-        return self.display_duration
+        return self.odds_renderer.get_display_duration()
 
     def get_info(self) -> Dict[str, Any]:
         """Return plugin info for web UI."""
         info = super().get_info()
 
-        # Get league-specific configurations
-        leagues_config = {}
-        for league_key, league_config in self.leagues.items():
-            leagues_config[league_key] = {
-                'enabled': league_config.get('enabled', False),
-                'favorite_teams': league_config.get('favorite_teams', []),
-                'display_modes': league_config.get('display_modes', {}),
-                'recent_games_to_show': league_config.get('recent_games_to_show', 5),
-                'upcoming_games_to_show': league_config.get('upcoming_games_to_show', 10),
-                'update_interval_seconds': league_config.get('update_interval_seconds', 60)
-            }
+        # Get filter stats
+        filter_stats = self.game_filter.get_filter_stats()
+        
+        # Get background service status
+        background_status = self.data_fetcher.get_background_service_status()
 
         info.update({
-            'total_games': len(self.current_odds),
-            'enabled_leagues': [k for k, v in self.leagues.items() if v.get('enabled', False)],
+            'total_games': len(self.current_games),
+            'enabled_leagues': self.config.get('enabled_leagues', []),
             'last_update': self.last_update,
-            'display_duration': self.display_duration,
-            'scroll_speed': self.scroll_speed,
-            'show_favorite_teams_only': self.show_favorite_teams_only,
-            'max_games_per_league': self.max_games_per_league,
-            'leagues_config': leagues_config,
+            'display_duration': self.get_display_duration(),
+            'scroll_speed': self.config.get('scroll_speed', 2),
+            'show_favorite_teams_only': self.config.get('show_favorite_teams_only', False),
+            'max_games_per_league': self.config.get('max_games_per_league', 5),
+            'filter_stats': filter_stats,
+            'background_service': background_status,
             'global_config': self.global_config
         })
         return info
 
     def cleanup(self) -> None:
         """Cleanup resources."""
-        self.current_odds = []
+        self.current_games = []
+        self.odds_renderer.reset_scroll()
         self.logger.info("Odds ticker plugin cleaned up")
