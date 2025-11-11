@@ -1906,38 +1906,13 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             # Update dynamic duration from ScrollHelper
             self.dynamic_duration = self.scroll_helper.get_dynamic_duration()
             
-            # Display the visible portion
-            self.display_manager.image = visible_image
-            self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
+            # Display the visible portion (use paste like leaderboard for better performance)
+            if visible_image:
+                self.display_manager.image.paste(visible_image, (0, 0))
+                self.display_manager.update_display()
             
-            # Add timeout protection for display update to prevent hanging
-            try:
-                import threading
-                import queue
-                
-                display_queue = queue.Queue()
-                
-                def update_display():
-                    try:
-                        self.display_manager.update_display()
-                        display_queue.put(('success', None))
-                    except Exception as e:
-                        display_queue.put(('error', e))
-                
-                # Start display update in a separate thread with 1-second timeout
-                display_thread = threading.Thread(target=update_display)
-                display_thread.daemon = True
-                display_thread.start()
-                
-                try:
-                    result_type, result_data = display_queue.get(timeout=1)
-                    if result_type == 'error':
-                        logger.error(f"Display update failed: {result_data}")
-                except queue.Empty:
-                    logger.warning("Display update timed out after 1 second")
-                
-            except Exception as e:
-                logger.error(f"Error during display update: {e}")
+            # Log frame rate for performance monitoring (like leaderboard does)
+            self.scroll_helper.log_frame_rate()
             
         except Exception as e:
             logger.error(f"Error displaying odds ticker: {e}", exc_info=True)
