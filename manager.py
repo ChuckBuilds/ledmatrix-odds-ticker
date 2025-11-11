@@ -231,6 +231,10 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         # Initialize dynamic team resolver
         self.dynamic_resolver = DynamicTeamResolver()
         
+        # Enable scrolling for high FPS mode in display controller
+        # This tells the display controller to use 8ms intervals (125 FPS) instead of slower updates
+        self.enable_scrolling = True
+        
         # Initialize ScrollHelper for scrolling functionality
         display_width = self.display_manager.matrix.width if hasattr(self.display_manager, 'matrix') else 128
         display_height = self.display_manager.matrix.height if hasattr(self.display_manager, 'matrix') else 32
