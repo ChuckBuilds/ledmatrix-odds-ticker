@@ -182,6 +182,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self.sort_order = self.odds_ticker_config.get('sort_order', 'soonest')
         self.enabled_leagues = self.odds_ticker_config.get('enabled_leagues', ['nfl', 'nba', 'mlb'])
         self.update_interval = self.odds_ticker_config.get('update_interval', 3600)
+        # Scroll speed configuration - prefer scroll_pixels_per_second (more intuitive)
+        # Falls back to calculating from scroll_speed/scroll_delay for backward compatibility
+        self.scroll_pixels_per_second = self.odds_ticker_config.get('scroll_pixels_per_second')
         self.scroll_speed = self.odds_ticker_config.get('scroll_speed', 2)
         self.scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)
         self.display_duration = self.odds_ticker_config.get('display_duration', 30)
@@ -241,10 +244,17 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self.scroll_helper = ScrollHelper(display_width, display_height, logger=self.logger)
         
         # Configure ScrollHelper with plugin settings
-        # Convert scroll_speed from pixels per frame to pixels per second
-        # scroll_speed is pixels per frame, scroll_delay is seconds per frame
-        # So pixels per second = scroll_speed / scroll_delay
-        pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 20
+        # Use scroll_pixels_per_second if provided (more intuitive), otherwise calculate from scroll_speed/scroll_delay
+        if self.scroll_pixels_per_second is not None:
+            pixels_per_second = self.scroll_pixels_per_second
+            self.logger.info(f"Using scroll_pixels_per_second: {pixels_per_second} px/s")
+        else:
+            # Convert scroll_speed from pixels per frame to pixels per second (backward compatibility)
+            # scroll_speed is pixels per frame, scroll_delay is seconds per frame
+            # So pixels per second = scroll_speed / scroll_delay
+            pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 20
+            self.logger.info(f"Calculated scroll speed: {pixels_per_second} px/s (from scroll_speed={self.scroll_speed}, scroll_delay={self.scroll_delay})")
+        
         self.scroll_helper.set_scroll_speed(pixels_per_second)
         self.scroll_helper.set_scroll_delay(self.scroll_delay)
         # Set target FPS for high-performance scrolling (backward compatible)
