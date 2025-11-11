@@ -243,8 +243,14 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 20
         self.scroll_helper.set_scroll_speed(pixels_per_second)
         self.scroll_helper.set_scroll_delay(self.scroll_delay)
-        # Set target FPS for high-performance scrolling
-        self.scroll_helper.set_target_fps(self.target_fps)
+        # Set target FPS for high-performance scrolling (backward compatible)
+        if hasattr(self.scroll_helper, 'set_target_fps'):
+            self.scroll_helper.set_target_fps(self.target_fps)
+        else:
+            # Fallback for older ScrollHelper versions - set target_fps directly
+            self.scroll_helper.target_fps = max(30.0, min(200.0, self.target_fps))
+            self.scroll_helper.frame_time_target = 1.0 / self.scroll_helper.target_fps
+            self.logger.debug(f"Target FPS set to: {self.scroll_helper.target_fps} FPS (using fallback method)")
         self.scroll_helper.set_dynamic_duration_settings(
             enabled=self.dynamic_duration_enabled,
             min_duration=self.min_duration,
