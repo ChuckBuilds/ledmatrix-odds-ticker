@@ -185,6 +185,8 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self.scroll_speed = self.odds_ticker_config.get('scroll_speed', 2)
         self.scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)
         self.display_duration = self.odds_ticker_config.get('display_duration', 30)
+        # Get target FPS from config (support both target_fps and scroll_target_fps for compatibility)
+        self.target_fps = self.odds_ticker_config.get('target_fps') or self.odds_ticker_config.get('scroll_target_fps', 120)
         self.future_fetch_days = self.odds_ticker_config.get('future_fetch_days', 7)
         self.loop = self.odds_ticker_config.get('loop', True)
         self.show_channel_logos = self.odds_ticker_config.get('show_channel_logos', True)
@@ -241,6 +243,8 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 20
         self.scroll_helper.set_scroll_speed(pixels_per_second)
         self.scroll_helper.set_scroll_delay(self.scroll_delay)
+        # Set target FPS for high-performance scrolling
+        self.scroll_helper.set_target_fps(self.target_fps)
         self.scroll_helper.set_dynamic_duration_settings(
             enabled=self.dynamic_duration_enabled,
             min_duration=self.min_duration,
