@@ -79,6 +79,7 @@ try:
     from src.background_data_service import get_background_service
     from src.dynamic_team_resolver import DynamicTeamResolver
     from src.logo_downloader import download_missing_logo
+    from src.common.scroll_helper import ScrollHelper
 except ImportError:
     # Fallback implementations
     def get_background_service(cache_manager, max_workers=1):
@@ -90,6 +91,9 @@ except ImportError:
     
     def download_missing_logo(league, team_id, team_abbr, logo_path, logo_url):
         return False
+    
+    class ScrollHelper:
+        pass  # Will be handled by proper import
 
 # Get logger
 logger = logging.getLogger(__name__)
@@ -208,8 +212,6 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         
         # State variables
         self.last_update = 0
-        self.scroll_position = 0
-        self.last_scroll_time = 0
         self.games_data = []
         self.current_game_index = 0
         self.ticker_image = None # This will hold the single, wide image
@@ -226,6 +228,25 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         
         # Initialize dynamic team resolver
         self.dynamic_resolver = DynamicTeamResolver()
+        
+        # Initialize ScrollHelper for scrolling functionality
+        display_width = self.display_manager.matrix.width if hasattr(self.display_manager, 'matrix') else 128
+        display_height = self.display_manager.matrix.height if hasattr(self.display_manager, 'matrix') else 32
+        self.scroll_helper = ScrollHelper(display_width, display_height, logger=self.logger)
+        
+        # Configure ScrollHelper with plugin settings
+        # Convert scroll_speed from pixels per frame to pixels per second
+        # scroll_speed is pixels per frame, scroll_delay is seconds per frame
+        # So pixels per second = scroll_speed / scroll_delay
+        pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 20
+        self.scroll_helper.set_scroll_speed(pixels_per_second)
+        self.scroll_helper.set_scroll_delay(self.scroll_delay)
+        self.scroll_helper.set_dynamic_duration_settings(
+            enabled=self.dynamic_duration_enabled,
+            min_duration=self.min_duration,
+            max_duration=self.max_duration,
+            buffer=self.duration_buffer
+        )
         
         # League configurations - exactly like original
         self.league_configs = {
@@ -1597,13 +1618,14 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         return image
 
     def _create_ticker_image(self):
-        """Create a single wide image containing all game tickers."""
+        """Create a single wide image containing all game tickers using ScrollHelper."""
         logger.debug("Entering _create_ticker_image method")
         logger.debug(f"Number of games in games_data: {len(self.games_data) if self.games_data else 0}")
         
         if not self.games_data:
             logger.warning("No games data available, cannot create ticker image.")
             self.ticker_image = None
+            self.scroll_helper.clear_cache()
             return
 
         logger.debug(f"Creating ticker image for {len(self.games_data)} games.")
@@ -1613,44 +1635,48 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         if not game_images:
             logger.warning("Failed to create any game images.")
             self.ticker_image = None
+            self.scroll_helper.clear_cache()
             return
 
-        gap_width = 24  # Reduced gap between games
-        display_width = self.display_manager.matrix.width  # Add display width of black space at start and end
-        content_width = sum(img.width for img in game_images) + gap_width * (len(game_images))
-        total_width = display_width + content_width + display_width  # Add display width at both start and end
+        gap_width = 24  # Gap between games
         height = self.display_manager.matrix.height
-
-        logger.debug(f"Image creation details:")
-        logger.debug(f"  Display width: {display_width}px")
-        logger.debug(f"  Content width: {content_width}px")
-        logger.debug(f"  Total image width: {total_width}px")
-        logger.debug(f"  Number of games: {len(game_images)}")
-        logger.debug(f"  Gap width: {gap_width}px")
-
-        self.ticker_image = Image.new('RGB', (total_width, height), color=(0, 0, 0))
         
-        current_x = display_width  # Start after the black space
+        # Use ScrollHelper to create the scrolling image
+        # ScrollHelper automatically adds display_width padding at the start
+        self.ticker_image = self.scroll_helper.create_scrolling_image(
+            content_items=game_images,
+            item_gap=gap_width,
+            element_gap=0  # No gap within items
+        )
+        
+        # Add white vertical bars between games for visual separation
+        # ScrollHelper places items with gaps, so we need to find where to add bars
+        display_width = self.display_manager.matrix.width
+        current_x = display_width  # Start after initial padding
+        
         for idx, img in enumerate(game_images):
-            self.ticker_image.paste(img, (current_x, 0))
             current_x += img.width
-            # Draw a 1px white vertical bar between games, except after the last one
+            # Add white bar in the middle of the gap (except after last game)
             if idx < len(game_images) - 1:
                 bar_x = current_x + gap_width // 2
-                for y in range(height):
-                    self.ticker_image.putpixel((bar_x, y), (255, 255, 255))
+                # Use ImageDraw for more efficient drawing
+                draw = ImageDraw.Draw(self.ticker_image)
+                draw.line([(bar_x, 0), (bar_x, height - 1)], fill=(255, 255, 255), width=1)
             current_x += gap_width
-            
-        # Calculate total scroll width for dynamic duration (only the content width, not including display width)
-        self.total_scroll_width = content_width
+        
+        # Store reference for compatibility
+        self.total_scroll_width = self.scroll_helper.total_scroll_width
+        
+        # Get dynamic duration from ScrollHelper
+        self.dynamic_duration = self.scroll_helper.get_dynamic_duration()
+        
         logger.debug(f"Odds ticker image creation:")
-        logger.debug(f"  Display width: {display_width}px (added at start and end)")
-        logger.debug(f"  Content width: {content_width}px")
-        logger.debug(f"  Total image width: {total_width}px")
+        logger.debug(f"  Display width: {display_width}px")
+        logger.debug(f"  Content width: {self.total_scroll_width}px")
+        logger.debug(f"  Total image width: {self.ticker_image.width}px")
         logger.debug(f"  Number of games: {len(game_images)}")
         logger.debug(f"  Gap width: {gap_width}px")
-        logger.debug(f"  Set total_scroll_width to: {self.total_scroll_width}px")
-        self.calculate_dynamic_duration()
+        logger.debug(f"  Dynamic duration: {self.dynamic_duration}s")
 
     def _draw_text_with_outline(self, draw: ImageDraw.Draw, text: str, position: tuple, font: ImageFont.FreeTypeFont, 
                                fill: tuple = (255, 255, 255), outline_color: tuple = (0, 0, 0)) -> None:
@@ -1662,103 +1688,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         # Draw main text
         draw.text((x, y), text, font=font, fill=fill)
 
-    def calculate_dynamic_duration(self):
-        """Calculate the exact time needed to display all odds ticker content"""
-        logger.debug(f"calculate_dynamic_duration called - dynamic_duration_enabled: {self.dynamic_duration_enabled}, total_scroll_width: {self.total_scroll_width}")
-        
-        # If dynamic duration is disabled, use fixed duration from config
-        if not self.dynamic_duration_enabled:
-            self.dynamic_duration = self.odds_ticker_config.get('display_duration', 60)
-            logger.debug(f"Dynamic duration disabled, using fixed duration: {self.dynamic_duration}s")
-            return
-            
-        if not self.total_scroll_width:
-            self.dynamic_duration = self.min_duration  # Use configured minimum
-            logger.debug(f"total_scroll_width is 0, using minimum duration: {self.min_duration}s")
-            return
-            
-        try:
-            # Get display width (assume full width of display)
-            display_width = getattr(self.display_manager, 'matrix', None)
-            if display_width:
-                display_width = display_width.width
-            else:
-                display_width = 128  # Default to 128 if not available
-            
-            # Calculate total scroll distance needed
-            # For looping content, we need to scroll the entire content width
-            # For non-looping content, we need content width minus display width (since last part shows fully)
-            if self.loop:
-                total_scroll_distance = self.total_scroll_width
-            else:
-                # For single pass, we need to scroll until the last content is fully visible
-                total_scroll_distance = max(0, self.total_scroll_width - display_width)
-            
-            # Calculate time based on scroll speed and delay
-            # scroll_speed = pixels per frame, scroll_delay = seconds per frame
-            # However, actual observed speed is slower than theoretical calculation
-            # Based on log analysis: 1950px in 36s = 54.2 px/s actual speed
-            # vs theoretical: 1px/0.01s = 100 px/s
-            # Use actual observed speed for more accurate timing
-            actual_scroll_speed = 54.2  # pixels per second (calculated from logs)
-            total_time = total_scroll_distance / actual_scroll_speed
-            
-            # Add buffer time for smooth cycling (configurable %)
-            buffer_time = total_time * self.duration_buffer
-            
-            # Calculate duration for single complete pass
-            if self.loop:
-                # For looping: add 5-second buffer to ensure complete scroll before switching
-                fixed_buffer = 5  # 5 seconds of additional buffer
-                calculated_duration = int(total_time + fixed_buffer)
-                logger.debug(f"Looping enabled, duration set to one loop cycle plus 5s buffer: {calculated_duration}s")
-            else:
-                # For single pass: precise calculation to show content exactly once
-                # Add buffer to prevent cutting off the last content
-                completion_buffer = total_time * 0.05  # 5% extra to ensure complete display
-                calculated_duration = int(total_time + buffer_time + completion_buffer)
-                logger.debug(f"Single pass mode, added {completion_buffer:.2f}s completion buffer for precise timing")
-            
-            # Apply configured min/max limits
-            if calculated_duration < self.min_duration:
-                self.dynamic_duration = self.min_duration
-                logger.debug(f"Duration capped to minimum: {self.min_duration}s")
-            elif calculated_duration > self.max_duration:
-                self.dynamic_duration = self.max_duration
-                logger.debug(f"Duration capped to maximum: {self.max_duration}s")
-            else:
-                self.dynamic_duration = calculated_duration
-            
-            # Additional safety check: if the calculated duration seems too short for the content,
-            # ensure we have enough time to display all content properly
-            if self.dynamic_duration < 45 and self.total_scroll_width > 200:
-                # If we have content but short duration, increase it
-                # Use a more generous calculation: at least 45s or 1s per 20px
-                self.dynamic_duration = max(45, int(self.total_scroll_width / 20))
-                logger.debug(f"Adjusted duration for content: {self.dynamic_duration}s (content width: {self.total_scroll_width}px)")
-                
-            logger.info(f"Odds ticker dynamic duration calculation:")
-            logger.info(f"  Display width: {display_width}px")
-            logger.info(f"  Content width: {self.total_scroll_width}px")
-            logger.info(f"  Total scroll distance: {total_scroll_distance}px")
-            logger.info(f"  Configured scroll speed: {self.scroll_speed}px/frame")
-            logger.info(f"  Configured scroll delay: {self.scroll_delay}s/frame")
-            logger.info(f"  Actual observed scroll speed: {actual_scroll_speed}px/s (from log analysis)")
-            logger.info(f"  Base time: {total_time:.2f}s")
-            logger.info(f"  Buffer time: {buffer_time:.2f}s ({self.duration_buffer*100}%)")
-            logger.info(f"  Looping enabled: {self.loop}")
-            if self.loop:
-                logger.info(f"  Fixed buffer added: 5s")
-            logger.info(f"  Calculated duration: {calculated_duration}s")
-            logger.info(f"Final calculated duration: {self.dynamic_duration}s")
-            
-            # Verify the duration makes sense for the content
-            expected_scroll_time = self.total_scroll_width / actual_scroll_speed
-            logger.info(f"  Verification - Time to scroll content: {expected_scroll_time:.1f}s")
-            
-        except Exception as e:
-            logger.error(f"Error calculating dynamic duration: {e}")
-            self.dynamic_duration = self.min_duration  # Use configured minimum as fallback
+    # Dynamic duration calculation is now handled by ScrollHelper
 
     def get_dynamic_duration(self) -> int:
         """Get the calculated dynamic duration for display"""
@@ -1770,7 +1700,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 # Force an update to get the data and calculate proper duration
                 # Bypass the update interval check for duration calculation
                 self.games_data = self._fetch_upcoming_games()
-                self.scroll_position = 0
+                self.scroll_helper.reset_scroll()
                 self.current_game_index = 0
                 self._create_ticker_image() # Create the composite image
                 logger.debug(f"Force update completed, total_scroll_width: {self.total_scroll_width}px")
@@ -1810,7 +1740,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             
             self.games_data = self._fetch_upcoming_games()
             self.last_update = current_time
-            self.scroll_position = 0
+            self.scroll_helper.reset_scroll()
             self.current_game_index = 0
             # Reset logging flags when updating data
             self._end_reached_logged = False
@@ -1831,7 +1761,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         """Display the odds ticker."""
         logger.debug("Entering display method")
         logger.debug(f"Odds ticker enabled: {self.is_enabled}")
-        logger.debug(f"Current scroll position: {self.scroll_position}")
+        logger.debug(f"Current scroll position: {self.scroll_helper.scroll_position}")
         logger.debug(f"Ticker image width: {self.ticker_image.width if self.ticker_image else 'None'}")
         logger.debug(f"Dynamic duration: {self.dynamic_duration}s")
         
@@ -1840,11 +1770,11 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             return
         
         # Reset display start time when force_clear is True or when starting fresh
-        if force_clear or not hasattr(self, '_display_start_time'):
+        if force_clear or self._display_start_time is None:
             self._display_start_time = time.time()
             logger.debug(f"Reset/initialized display start time: {self._display_start_time}")
             # Also reset scroll position for clean start
-            self.scroll_position = 0
+            self.scroll_helper.reset_scroll()
             # Reset the end reached logging flag
             self._end_reached_logged = False
             # Reset the insufficient time warning logging flag
@@ -1856,7 +1786,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             if elapsed_time > (self.dynamic_duration * 2):
                 logger.debug(f"Display start time is too old ({elapsed_time:.1f}s), resetting")
                 self._display_start_time = current_time
-                self.scroll_position = 0
+                self.scroll_helper.reset_scroll()
                 # Reset the end reached logging flag
                 self._end_reached_logged = False
                 # Reset the insufficient time warning logging flag
@@ -1934,100 +1864,39 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 return
 
         try:
-            current_time = time.time()
-            
-            # Check if we should be scrolling
-            should_scroll = current_time - self.last_scroll_time >= self.scroll_delay
-            
-            # Signal scrolling state to display manager
-            if should_scroll:
+            # Use ScrollHelper for scrolling functionality
+            # For non-looping mode, only update scroll if not complete
+            if self.loop or not self.scroll_helper.is_scroll_complete():
+                # Update scroll position (handles time-based scrolling automatically)
+                self.scroll_helper.update_scroll_position()
+            else:
+                # Non-looping and scroll complete - stop scrolling
+                if not self._end_reached_logged:
+                    logger.info("Odds ticker reached end - scroll complete")
+                    self._end_reached_logged = True
+                # Signal that scrolling has stopped
                 if hasattr(self.display_manager, 'set_scrolling_state'):
+                    self.display_manager.set_scrolling_state(False)
+            
+            # Get the visible portion of the scrolling image
+            visible_image = self.scroll_helper.get_visible_portion()
+            
+            if visible_image is None:
+                logger.warning("ScrollHelper returned None for visible portion, using fallback")
+                self._display_fallback_message()
+                return
+            
+            # Signal scrolling state
+            if hasattr(self.display_manager, 'set_scrolling_state'):
+                if self.loop or not self.scroll_helper.is_scroll_complete():
                     self.display_manager.set_scrolling_state(True)
-            else:
-                # If we're not scrolling, check if we should process deferred updates
-                if hasattr(self.display_manager, 'process_deferred_updates'):
-                    self.display_manager.process_deferred_updates()
-            
-            # Scroll the image
-            if should_scroll:
-                self.scroll_position += self.scroll_speed
-                self.last_scroll_time = current_time
-            
-            # Calculate crop region
-            width = self.display_manager.matrix.width
-            height = self.display_manager.matrix.height
-            
-            # Handle looping based on configuration
-            if self.loop:
-                # Reset position when we've scrolled past the end for a continuous loop
-                if self.scroll_position >= self.ticker_image.width:
-                    logger.debug(f"Odds ticker loop reset: scroll_position {self.scroll_position} >= image width {self.ticker_image.width}")
-                    self.scroll_position = 0
-            else:
-                # Stop scrolling when we reach the end
-                if self.scroll_position >= self.ticker_image.width - width:
-                    if not self._end_reached_logged:
-                        logger.info(f"Odds ticker reached end: scroll_position {self.scroll_position} >= {self.ticker_image.width - width}")
-                        logger.info("Odds ticker scrolling stopped - reached end of content")
-                        self._end_reached_logged = True
-                    self.scroll_position = self.ticker_image.width - width
-                    # Signal that scrolling has stopped
-                    if hasattr(self.display_manager, 'set_scrolling_state'):
-                        self.display_manager.set_scrolling_state(False)
-            
-            # Check if we're at a natural break point for mode switching
-            # If we're near the end of the display duration and not at a clean break point,
-            # adjust the scroll position to complete the current game display
-            elapsed_time = current_time - self._display_start_time
-            remaining_time = self.dynamic_duration - elapsed_time
-            
-            # Log scroll progress every 50 pixels to help debug (less verbose)
-            if self.scroll_position % 50 == 0 and self.scroll_position > 0:
-                logger.info(f"Odds ticker progress: elapsed={elapsed_time:.1f}s, remaining={remaining_time:.1f}s, scroll_pos={self.scroll_position}/{self.ticker_image.width}px")
-            
-            # If we have less than 2 seconds remaining, check if we can complete the content display
-            if remaining_time < 2.0 and self.scroll_position > 0:
-                # Calculate how much time we need to complete the current scroll position
-                # Use actual observed scroll speed (54.2 px/s) instead of theoretical calculation
-                actual_scroll_speed = 54.2  # pixels per second (calculated from logs)
-                
-                if self.loop:
-                    # For looping, we need to complete one full cycle
-                    distance_to_complete = self.ticker_image.width - self.scroll_position
                 else:
-                    # For single pass, we need to reach the end (content width minus display width)
-                    end_position = max(0, self.ticker_image.width - width)
-                    distance_to_complete = end_position - self.scroll_position
-                
-                time_to_complete = distance_to_complete / actual_scroll_speed
-                
-                if time_to_complete <= remaining_time:
-                    # We have enough time to complete the scroll, continue normally
-                    logger.debug(f"Sufficient time remaining ({remaining_time:.1f}s) to complete scroll ({time_to_complete:.1f}s)")
-                else:
-                    # Not enough time, reset to beginning for clean transition
-                    # Only log this warning once per display session to avoid spam
-                    if not self._insufficient_time_warning_logged:
-                        logger.warning(f"Not enough time to complete content display - remaining: {remaining_time:.1f}s, needed: {time_to_complete:.1f}s")
-                        logger.debug(f"Resetting scroll position for clean transition")
-                        self._insufficient_time_warning_logged = True
-                    else:
-                        logger.debug(f"Resetting scroll position for clean transition (insufficient time warning already logged)")
-                    self.scroll_position = 0
+                    self.display_manager.set_scrolling_state(False)
             
-            # Create the visible part of the image by pasting from the ticker_image
-            visible_image = Image.new('RGB', (width, height))
+            # Update dynamic duration from ScrollHelper
+            self.dynamic_duration = self.scroll_helper.get_dynamic_duration()
             
-            # Main part
-            visible_image.paste(self.ticker_image, (-self.scroll_position, 0))
-
-            # Handle wrap-around for continuous scroll
-            if self.scroll_position + width > self.ticker_image.width:
-                wrap_around_width = (self.scroll_position + width) - self.ticker_image.width
-                wrap_around_image = self.ticker_image.crop((0, 0, wrap_around_width, height))
-                visible_image.paste(wrap_around_image, (self.ticker_image.width - self.scroll_position, 0))
-            
-            # Display the cropped image
+            # Display the visible portion
             self.display_manager.image = visible_image
             self.display_manager.draw = ImageDraw.Draw(self.display_manager.image)
             
@@ -2114,7 +1983,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             'max_games_per_league': self.max_games_per_league,
             'dynamic_duration': self.dynamic_duration,
             'total_scroll_width': self.total_scroll_width,
-            'scroll_position': self.scroll_position,
+            'scroll_position': self.scroll_helper.scroll_position,
             'ticker_image_width': self.ticker_image.width if self.ticker_image else 0
         }
         return info
@@ -2123,8 +1992,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         """Cleanup resources."""
         self.games_data = []
         self.ticker_image = None
-        self.scroll_position = 0
-        self.last_scroll_time = 0
+        self.scroll_helper.clear_cache()
         self._end_reached_logged = False
         self._insufficient_time_warning_logged = False
         logger.info("Odds ticker plugin cleaned up")
