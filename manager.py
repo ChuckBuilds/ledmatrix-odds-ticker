@@ -1734,6 +1734,119 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         logger.debug(f"get_dynamic_duration called, returning: {self.dynamic_duration}s")
         return self.dynamic_duration
 
+    def is_cycle_complete(self) -> bool:
+        """
+        Indicate whether the plugin has completed a full display cycle.
+        
+        For scrolling content, the cycle is complete when:
+        - Dynamic duration is enabled
+        - Scroll is complete (all content has been shown)
+        - Loop mode is disabled (if looping, cycle never completes)
+        
+        Returns:
+            True if the cycle is complete, False otherwise
+        """
+        # If dynamic duration is not enabled, always return True (use fixed duration)
+        if not self.supports_dynamic_duration():
+            return True
+        
+        # If looping is enabled, the cycle never completes
+        if self.loop:
+            return False
+        
+        # Check if scroll is complete using ScrollHelper
+        if hasattr(self, 'scroll_helper') and self.scroll_helper:
+            return self.scroll_helper.is_scroll_complete()
+        
+        # Fallback: if no scroll helper, assume complete
+        return True
+
+    def reset_cycle_state(self) -> None:
+        """
+        Reset any internal counters/state related to cycle tracking.
+        
+        Called by the display controller before beginning a new dynamic-duration
+        session. Resets the scroll position and state.
+        """
+        super().reset_cycle_state()
+        
+        # Reset scroll helper state
+        if hasattr(self, 'scroll_helper') and self.scroll_helper:
+            self.scroll_helper.reset_scroll()
+            logger.debug("Reset scroll helper state for new cycle")
+        
+        # Reset any plugin-specific cycle tracking
+        self._end_reached_logged = False
+
+    def on_config_change(self, new_config: Dict[str, Any]) -> None:
+        """
+        Handle configuration changes, particularly for dynamic duration settings.
+        
+        Args:
+            new_config: The new plugin configuration dictionary
+        """
+        # Update the plugin's config reference
+        old_config = self.config.copy() if self.config else {}
+        self.config = new_config
+        self.odds_ticker_config = new_config
+        
+        # Check if dynamic duration settings changed
+        old_dynamic = old_config.get('dynamic_duration', {})
+        if isinstance(old_dynamic, bool):
+            old_dynamic = {'enabled': old_dynamic}
+        new_dynamic = new_config.get('dynamic_duration', {})
+        if isinstance(new_dynamic, bool):
+            new_dynamic = {'enabled': new_dynamic}
+        
+        # Update dynamic duration settings if they changed
+        old_enabled = old_dynamic.get('enabled', True) if isinstance(old_dynamic, dict) else old_dynamic
+        new_enabled = new_dynamic.get('enabled', True) if isinstance(new_dynamic, dict) else new_dynamic
+        
+        if old_enabled != new_enabled:
+            self.logger.info(
+                "Dynamic duration %s for odds-ticker plugin",
+                "enabled" if new_enabled else "disabled"
+            )
+        
+        # Update dynamic duration settings from config
+        self.dynamic_duration_enabled = new_config.get('dynamic_duration', True)
+        if isinstance(self.dynamic_duration_enabled, dict):
+            self.dynamic_duration_enabled = self.dynamic_duration_enabled.get('enabled', True)
+        
+        self.min_duration = new_config.get('min_duration', 30)
+        if isinstance(self.dynamic_duration_enabled, dict):
+            min_dur = new_config.get('dynamic_duration', {}).get('min_duration_seconds')
+            if min_dur is not None:
+                self.min_duration = min_dur
+        
+        self.max_duration = new_config.get('max_duration', 300)
+        if isinstance(new_config.get('dynamic_duration'), dict):
+            max_dur = new_config.get('dynamic_duration', {}).get('max_duration_seconds')
+            if max_dur is not None:
+                self.max_duration = max_dur
+        
+        self.duration_buffer = new_config.get('duration_buffer', 0.1)
+        if isinstance(new_config.get('dynamic_duration'), dict):
+            buffer = new_config.get('dynamic_duration', {}).get('buffer')
+            if buffer is not None:
+                self.duration_buffer = buffer
+        
+        # Update ScrollHelper with new settings
+        if hasattr(self, 'scroll_helper') and self.scroll_helper:
+            self.scroll_helper.set_dynamic_duration_settings(
+                enabled=self.dynamic_duration_enabled,
+                min_duration=self.min_duration,
+                max_duration=self.max_duration,
+                buffer=self.duration_buffer
+            )
+            self.logger.debug(
+                "Updated ScrollHelper dynamic duration settings: enabled=%s, min=%ds, max=%ds, buffer=%.1f%%",
+                self.dynamic_duration_enabled,
+                self.min_duration,
+                self.max_duration,
+                self.duration_buffer * 100
+            )
+
     def update(self):
         """Update odds ticker data."""
         logger.debug("Entering update method")
