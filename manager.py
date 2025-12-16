@@ -33,6 +33,7 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 import pytz
 from pathlib import Path
+import numpy as np
 
 # Import will be handled by the plugin system
 try:
@@ -1688,6 +1689,11 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 draw.line([(bar_x, 0), (bar_x, height - 1)], fill=(255, 255, 255), width=1)
             current_x += gap_width
         
+        # Update ScrollHelper's cached image and array to include the white bars
+        # This ensures the bars are visible when scrolling
+        self.scroll_helper.cached_image = self.ticker_image
+        self.scroll_helper.cached_array = np.array(self.ticker_image)
+        
         # Store reference for compatibility
         self.total_scroll_width = self.scroll_helper.total_scroll_width
         
@@ -1733,6 +1739,12 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         
         logger.debug(f"get_dynamic_duration called, returning: {self.dynamic_duration}s")
         return self.dynamic_duration
+
+    def supports_dynamic_duration(self) -> bool:
+        """Check if dynamic duration is enabled for this plugin."""
+        if not self.is_enabled:
+            return False
+        return self.dynamic_duration_enabled
 
     def is_cycle_complete(self) -> bool:
         """
@@ -2035,7 +2047,24 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             
             # Display the visible portion (use paste like leaderboard for better performance)
             if visible_image:
-                self.display_manager.image.paste(visible_image, (0, 0))
+                # Ensure display_manager.image exists and is the right size
+                matrix_width = self.display_manager.matrix.width
+                matrix_height = self.display_manager.matrix.height
+                if not hasattr(self.display_manager, 'image') or self.display_manager.image is None:
+                    self.display_manager.image = Image.new('RGB', (matrix_width, matrix_height), (0, 0, 0))
+                elif self.display_manager.image.size != (matrix_width, matrix_height):
+                    # Resize if dimensions don't match
+                    self.display_manager.image = Image.new('RGB', (matrix_width, matrix_height), (0, 0, 0))
+                
+                # Ensure visible_image matches display size (should always be true, but verify)
+                if visible_image.size == (matrix_width, matrix_height):
+                    self.display_manager.image.paste(visible_image, (0, 0))
+                else:
+                    # Resize visible_image to match display if needed (shouldn't happen, but safety check)
+                    logger.warning(f"Visible image size {visible_image.size} doesn't match display size ({matrix_width}, {matrix_height}), resizing")
+                    visible_image = visible_image.resize((matrix_width, matrix_height), Image.Resampling.LANCZOS)
+                    self.display_manager.image.paste(visible_image, (0, 0))
+                
                 self.display_manager.update_display()
             
             # Log frame rate for performance monitoring (like leaderboard does)

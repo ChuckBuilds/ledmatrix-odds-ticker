@@ -50,12 +50,22 @@
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["nfl", "nba", "mlb", "ncaa_fb", "ncaam_basketball", "nhl", "milb"],
+        "enum": ["nfl", "nba", "mlb", "ncaa_fb", "nhl"],
         "description": "League identifier"
       },
       "uniqueItems": true,
-      "default": ["nfl", "mlb", "ncaa_fb", "milb"],
-      "description": "List of enabled leagues for odds display"
+      "default": ["nfl"],
+      "x-widget": "checkbox-group",
+      "x-options": {
+        "labels": {
+          "nfl": "NFL",
+          "nba": "NBA",
+          "mlb": "MLB",
+          "ncaa_fb": "NCAA Football",
+          "nhl": "NHL"
+        }
+      },
+      "description": "Select which leagues to display odds for"
     },
     "update_interval": {
       "type": "integer",
