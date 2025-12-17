@@ -183,11 +183,24 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self.sort_order = self.odds_ticker_config.get('sort_order', 'soonest')
         self.enabled_leagues = self.odds_ticker_config.get('enabled_leagues', ['nfl', 'nba', 'mlb'])
         self.update_interval = self.odds_ticker_config.get('update_interval', 3600)
-        # Scroll speed configuration - prefer scroll_pixels_per_second (more intuitive)
-        # Falls back to calculating from scroll_speed/scroll_delay for backward compatibility
-        self.scroll_pixels_per_second = self.odds_ticker_config.get('scroll_pixels_per_second')
-        self.scroll_speed = self.odds_ticker_config.get('scroll_speed', 2)
-        self.scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)
+        # Scroll speed configuration - prefer display object (granular control), fallback to scroll_pixels_per_second for backward compatibility
+        display_config = self.odds_ticker_config.get('display', {})
+        if display_config and ('scroll_speed' in display_config or 'scroll_delay' in display_config):
+            # New format: use display object for granular control
+            self.scroll_speed = display_config.get('scroll_speed', 1.0)
+            self.scroll_delay = display_config.get('scroll_delay', 0.02)
+            self.scroll_pixels_per_second = None  # Not using pixels per second mode
+            self.logger.info(f"Using display.scroll_speed={self.scroll_speed} px/frame, display.scroll_delay={self.scroll_delay}s (frame-based mode)")
+        else:
+            # Old format: use scroll_pixels_per_second (backward compatibility)
+            self.scroll_pixels_per_second = self.odds_ticker_config.get('scroll_pixels_per_second')
+            self.scroll_speed = self.odds_ticker_config.get('scroll_speed', 2)
+            self.scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)
+            if self.scroll_pixels_per_second is not None:
+                self.logger.info(f"Using scroll_pixels_per_second={self.scroll_pixels_per_second} px/s (time-based mode, backward compatibility)")
+            else:
+                # Calculate from legacy scroll_speed/scroll_delay
+                self.logger.info(f"Using legacy scroll_speed={self.scroll_speed}, scroll_delay={self.scroll_delay} (backward compatibility)")
         self.display_duration = self.odds_ticker_config.get('display_duration', 30)
         # Get target FPS from config (support both target_fps and scroll_target_fps for compatibility)
         self.target_fps = self.odds_ticker_config.get('target_fps') or self.odds_ticker_config.get('scroll_target_fps', 120)
@@ -245,19 +258,37 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self.scroll_helper = ScrollHelper(display_width, display_height, logger=self.logger)
         
         # Configure ScrollHelper with plugin settings
-        # Use scroll_pixels_per_second if provided (more intuitive), otherwise calculate from scroll_speed/scroll_delay
-        if self.scroll_pixels_per_second is not None:
-            pixels_per_second = self.scroll_pixels_per_second
-            self.logger.info(f"Using scroll_pixels_per_second: {pixels_per_second} px/s")
-        else:
-            # Convert scroll_speed from pixels per frame to pixels per second (backward compatibility)
-            # scroll_speed is pixels per frame, scroll_delay is seconds per frame
-            # So pixels per second = scroll_speed / scroll_delay
-            pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 20
-            self.logger.info(f"Calculated scroll speed: {pixels_per_second} px/s (from scroll_speed={self.scroll_speed}, scroll_delay={self.scroll_delay})")
+        # Check if we should use frame-based scrolling (new format) or time-based (old format)
+        use_frame_based = (self.scroll_pixels_per_second is None and 
+                          display_config and 
+                          ('scroll_speed' in display_config or 'scroll_delay' in display_config))
         
-        self.scroll_helper.set_scroll_speed(pixels_per_second)
-        self.scroll_helper.set_scroll_delay(self.scroll_delay)
+        if use_frame_based:
+            # New format: use frame-based scrolling for finer control
+            if hasattr(self.scroll_helper, 'set_frame_based_scrolling'):
+                self.scroll_helper.set_frame_based_scrolling(True)
+                self.logger.info(f"Frame-based scrolling enabled: {self.scroll_speed} px/frame, {self.scroll_delay}s delay")
+            # In frame-based mode, scroll_speed is pixels per frame
+            self.scroll_helper.set_scroll_speed(self.scroll_speed)
+            self.scroll_helper.set_scroll_delay(self.scroll_delay)
+            # Log effective pixels per second for reference
+            pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 50
+            self.logger.info(f"Effective scroll speed: {pixels_per_second:.1f} px/s ({self.scroll_speed} px/frame at {1.0/self.scroll_delay:.0f} FPS)")
+        else:
+            # Old format: use time-based scrolling (backward compatibility)
+            if self.scroll_pixels_per_second is not None:
+                pixels_per_second = self.scroll_pixels_per_second
+                self.logger.info(f"Using scroll_pixels_per_second: {pixels_per_second} px/s (time-based mode)")
+            else:
+                # Convert scroll_speed from pixels per frame to pixels per second (backward compatibility)
+                # scroll_speed is pixels per frame, scroll_delay is seconds per frame
+                # So pixels per second = scroll_speed / scroll_delay
+                pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 20
+                self.logger.info(f"Calculated scroll speed: {pixels_per_second} px/s (from scroll_speed={self.scroll_speed}, scroll_delay={self.scroll_delay})")
+            
+            self.scroll_helper.set_scroll_speed(pixels_per_second)
+            self.scroll_helper.set_scroll_delay(self.scroll_delay)
+        
         # Set target FPS for high-performance scrolling (backward compatible)
         if hasattr(self.scroll_helper, 'set_target_fps'):
             self.scroll_helper.set_target_fps(self.target_fps)
@@ -2169,6 +2200,43 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         """Get display duration from config."""
         return self.get_dynamic_duration()
 
+    def set_scroll_speed(self, speed: float) -> None:
+        """Set the scroll speed (pixels per frame, 0.5-5.0)."""
+        # Clamp to valid range
+        self.scroll_speed = max(0.5, min(5.0, speed))
+        self.logger.info(f"Scroll speed set to: {self.scroll_speed} pixels/frame")
+        
+        # Update ScrollHelper based on current mode
+        if hasattr(self.scroll_helper, 'frame_based_scrolling') and self.scroll_helper.frame_based_scrolling:
+            # Frame-based mode: set pixels per frame directly
+            self.scroll_helper.set_scroll_speed(self.scroll_speed)
+            # Log effective pixels per second
+            pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 50
+            self.logger.info(f"Effective scroll speed: {pixels_per_second:.1f} px/s")
+        else:
+            # Time-based mode: convert to pixels per second
+            pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 20
+            self.scroll_helper.set_scroll_speed(pixels_per_second)
+    
+    def set_scroll_delay(self, delay: float) -> None:
+        """Set the scroll delay (seconds between frames, 0.001-0.1)."""
+        # Clamp to valid range
+        self.scroll_delay = max(0.001, min(0.1, delay))
+        self.logger.info(f"Scroll delay set to: {self.scroll_delay}s")
+        
+        # Update ScrollHelper
+        self.scroll_helper.set_scroll_delay(self.scroll_delay)
+        
+        # Recalculate pixels per second if in time-based mode
+        if hasattr(self.scroll_helper, 'frame_based_scrolling') and self.scroll_helper.frame_based_scrolling:
+            # Frame-based mode: log effective pixels per second
+            pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 50
+            self.logger.info(f"Effective scroll speed: {pixels_per_second:.1f} px/s ({self.scroll_speed} px/frame at {1.0/self.scroll_delay:.0f} FPS)")
+        else:
+            # Time-based mode: recalculate pixels per second
+            pixels_per_second = self.scroll_speed / self.scroll_delay if self.scroll_delay > 0 else self.scroll_speed * 20
+            self.scroll_helper.set_scroll_speed(pixels_per_second)
+    
     def get_info(self) -> Dict[str, Any]:
         """Return plugin info for web UI."""
         info = {
