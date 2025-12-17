@@ -14,6 +14,7 @@ Features:
 
 import time
 import logging
+import os
 from typing import Dict, Any, List, Optional
 from PIL import Image, ImageDraw, ImageFont
 
@@ -113,21 +114,78 @@ class OddsRenderer:
         
         logger.info("OddsRenderer initialized")
     
-    def _load_fonts(self) -> Dict[str, ImageFont.FreeTypeFont]:
-        """Load fonts for the ticker display."""
+    def _load_custom_font_from_element_config(self, element_config: Dict[str, Any], default_size: int = 8, default_font_name: str = 'PressStart2P-Regular.ttf'):
+        """
+        Load a custom font from an element configuration dictionary.
+        
+        Args:
+            element_config: Configuration dict for a single element containing 'font' and 'font_size' keys
+            default_size: Default font size if not specified in config
+            default_font_name: Default font file name if not specified in config
+            
+        Returns:
+            PIL ImageFont object
+        """
+        font_name = element_config.get('font', default_font_name)
+        font_size = int(element_config.get('font_size', default_size))
+        font_path = os.path.join('assets', 'fonts', font_name)
+        
         try:
-            return {
-                'small': ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 6),
-                'medium': ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 8),
-                'large': ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
-            }
+            if os.path.exists(font_path):
+                if font_path.lower().endswith('.ttf'):
+                    font = ImageFont.truetype(font_path, font_size)
+                    logger.debug(f"Loaded font: {font_name} at size {font_size}")
+                    return font
+                elif font_path.lower().endswith('.bdf'):
+                    try:
+                        font = ImageFont.truetype(font_path, font_size)
+                        logger.debug(f"Loaded BDF font: {font_name} at size {font_size}")
+                        return font
+                    except Exception:
+                        logger.warning(f"Could not load BDF font {font_name} with PIL, using default")
+                else:
+                    logger.warning(f"Unknown font file type: {font_name}, using default")
+            else:
+                logger.warning(f"Font file not found: {font_path}, using default")
         except Exception as e:
-            logger.error(f"Error loading fonts: {e}")
-            return {
-                'small': ImageFont.load_default(),
-                'medium': ImageFont.load_default(),
-                'large': ImageFont.load_default()
-            }
+            logger.error(f"Error loading font {font_name}: {e}, using default")
+        
+        # Fall back to default font
+        default_font_path = os.path.join('assets', 'fonts', default_font_name)
+        try:
+            if os.path.exists(default_font_path):
+                return ImageFont.truetype(default_font_path, font_size)
+            else:
+                logger.warning("Default font not found, using PIL default")
+                return ImageFont.load_default()
+        except Exception as e:
+            logger.error(f"Error loading default font: {e}")
+            return ImageFont.load_default()
+
+    def _load_fonts(self) -> Dict[str, ImageFont.FreeTypeFont]:
+        """Load fonts for the ticker display from config or use defaults."""
+        customization = self.config.get('customization', {})
+        
+        # Load custom fonts for specific text elements
+        team_config = customization.get('team_text', {})
+        odds_config = customization.get('odds_text', {})
+        datetime_config = customization.get('datetime_text', {})
+        
+        # Load fonts as instance variables
+        self.team_font = self._load_custom_font_from_element_config(team_config, default_size=8)
+        self.odds_font = self._load_custom_font_from_element_config(odds_config, default_size=8)
+        self.datetime_font = self._load_custom_font_from_element_config(datetime_config, default_size=8)
+        
+        # Keep 'large' font in dict for error messages
+        try:
+            large_font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+        except Exception as e:
+            logger.error(f"Error loading large font: {e}")
+            large_font = ImageFont.load_default()
+        
+        return {
+            'large': large_font
+        }
     
     def create_ticker_image(self, games_data: List[Dict]) -> Image.Image:
         """Create the composite ticker image from games data - matching original layout exactly."""
@@ -196,11 +254,11 @@ class OddsRenderer:
         logo_size = int(height * 1.2)
         h_padding = 4  # Use a consistent horizontal padding
 
-        # Fonts - all use medium font (8px) like original
-        team_font = self.fonts['medium']
-        odds_font = self.fonts['medium']
-        vs_font = self.fonts['medium']
-        datetime_font = self.fonts['medium']
+        # Fonts - use custom fonts from config
+        team_font = self.team_font
+        odds_font = self.odds_font
+        vs_font = self.team_font  # Use same font as team names for "vs."
+        datetime_font = self.datetime_font
 
         # Get team logos
         home_logo = self._get_team_logo(game.get("league", ''), game.get('home_id', ''), game.get('home_team', ''), game.get('logo_dir', ''))
@@ -474,7 +532,7 @@ class OddsRenderer:
         img = Image.new('RGB', (matrix_width, matrix_height), (0, 0, 0))
         draw = ImageDraw.Draw(img)
         draw.text((10, 12), "No Odds Available", 
-                 font=self.fonts['medium'], fill=(150, 150, 150))
+                 font=self.team_font, fill=(150, 150, 150))
         
         return img
     
@@ -538,7 +596,7 @@ class OddsRenderer:
         img = Image.new('RGB', (matrix_width, matrix_height), (0, 0, 0))
         draw = ImageDraw.Draw(img)
         draw.text((10, 12), message, 
-                 font=self.fonts['medium'], fill=(255, 0, 0))
+                 font=self.team_font, fill=(255, 0, 0))
         
         return img
     
