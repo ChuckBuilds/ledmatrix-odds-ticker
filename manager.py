@@ -160,6 +160,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         # Initialize BaseOddsManager with cache_manager and config_manager
         BaseOddsManager.__init__(self, cache_manager, plugin_manager)
         
+        # Resolve project root path (plugin_dir -> plugins -> project_root)
+        self.project_root = Path(__file__).resolve().parent.parent.parent
+        
         # Check required dependencies
         if get_background_service is None or DynamicTeamResolver is None:
             self.logger.error("Failed to import required services. Plugin will not function.")
@@ -569,7 +572,11 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             logger.debug("Cannot get team logo with missing team_abbr or logo_dir")
             return None
         try:
-            logo_path = Path(logo_dir, f"{team_abbr}.png")
+            # Resolve logo_dir path - if relative, resolve relative to project root
+            logo_dir_path = Path(logo_dir)
+            if not logo_dir_path.is_absolute():
+                logo_dir_path = self.project_root / logo_dir_path
+            logo_path = logo_dir_path / f"{team_abbr}.png"
             logger.debug(f"Attempting to load logo from path: {logo_path}")
             if (image := self.convert_image(logo_path)):
                 return image
@@ -1290,14 +1297,15 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
 
                 logger.info(f"Game {game.get('id')}: Final mapped logo name: '{logo_name}' from broadcast names: {broadcast_names}")
                 if logo_name:
-                    broadcast_logo = self.convert_image(Path("assets/broadcast_logos",f"{logo_name}.png"))
+                    # Resolve path relative to project root
+                    logo_path = self.project_root / "assets" / "broadcast_logos" / f"{logo_name}.png"
+                    broadcast_logo = self.convert_image(logo_path)
                     if broadcast_logo:
                         logger.info(f"Game {game.get('id')}: Successfully loaded broadcast logo for '{logo_name}' - Size: {broadcast_logo.size}")
                     else:
                         logger.warning(f"Game {game.get('id')}: Failed to load broadcast logo for '{logo_name}'")
                         # Check if the file exists
-                        logo_path = os.path.join('assets', 'broadcast_logos', f"{logo_name}.png")
-                        logger.warning(f"Game {game.get('id')}: Logo file exists: {os.path.exists(logo_path)}")
+                        logger.warning(f"Game {game.get('id')}: Logo file exists: {logo_path.exists()}")
                 else:
                     logger.warning(f"Game {game.get('id')}: No mapping found for broadcast names {broadcast_names} in BROADCAST_LOGO_MAP")
             else:

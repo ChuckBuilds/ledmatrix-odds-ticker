@@ -17,6 +17,7 @@ import logging
 import os
 from typing import Dict, Any, List, Optional
 from PIL import Image, ImageDraw, ImageFont
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,9 @@ class OddsRenderer:
         """Initialize the odds renderer."""
         self.display_manager = display_manager
         self.config = config
+        
+        # Resolve project root path (plugin_dir -> plugins -> project_root)
+        self.project_root = Path(__file__).resolve().parent.parent.parent
         
         # Display settings
         self.scroll_speed = config.get('scroll_speed', 2)
@@ -178,7 +182,9 @@ class OddsRenderer:
         
         # Keep 'large' font in dict for error messages
         try:
-            large_font = ImageFont.truetype("assets/fonts/PressStart2P-Regular.ttf", 10)
+            # Resolve font path relative to project root
+            font_path = self.project_root / "assets" / "fonts" / "PressStart2P-Regular.ttf"
+            large_font = ImageFont.truetype(str(font_path), 10)
         except Exception as e:
             logger.error(f"Error loading large font: {e}")
             large_font = ImageFont.load_default()
@@ -450,8 +456,6 @@ class OddsRenderer:
     def _get_team_logo(self, league: str, team_id: str, team_abbr: str, logo_dir: str) -> Optional[Image.Image]:
         """Get team logo from assets directory."""
         try:
-            from pathlib import Path
-            
             # Suppress unused parameter warnings
             _ = team_id
             _ = logo_dir
@@ -470,8 +474,8 @@ class OddsRenderer:
             if not logo_dir_name or not team_abbr:
                 return None
                 
-            # Try to load logo from assets/sports directory
-            logo_path = Path("assets/sports", logo_dir_name, f"{team_abbr}.png")
+            # Resolve path relative to project root
+            logo_path = self.project_root / "assets" / "sports" / logo_dir_name / f"{team_abbr}.png"
             if logo_path.exists():
                 return Image.open(logo_path)
             else:
@@ -485,8 +489,8 @@ class OddsRenderer:
     def _load_broadcast_logo(self, logo_name: str) -> Optional[Image.Image]:
         """Load broadcast logo from assets."""
         try:
-            from pathlib import Path
-            logo_path = Path("assets/broadcast_logos", f"{logo_name}.png")
+            # Resolve path relative to project root
+            logo_path = self.project_root / "assets" / "broadcast_logos" / f"{logo_name}.png"
             if logo_path.exists():
                 return Image.open(logo_path)
         except Exception as e:
