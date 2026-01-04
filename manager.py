@@ -522,8 +522,14 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             if game_time.tzinfo is None:
                 game_time = game_time.replace(tzinfo=pytz.UTC)
             
+            # Validate timezone before conversion
+            timezone = self.timezone
+            if timezone is None:
+                self.logger.warning("Timezone is None, using UTC as fallback")
+                timezone = pytz.UTC
+            
             # Convert to local timezone
-            local_time = game_time.astimezone(self.timezone)
+            local_time = game_time.astimezone(timezone)
             return local_time
             
         except Exception as e:
