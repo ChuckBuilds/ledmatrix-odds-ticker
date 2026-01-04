@@ -245,6 +245,10 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self._bases_data = None
         self._display_start_time = None
         
+        # Get timezone from main config
+        self.timezone = self._get_timezone()
+        self.logger.info(f"Odds ticker using timezone: {self.timezone}")
+        
         # Font setup
         self.fonts = self._load_fonts()
         
@@ -474,6 +478,63 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         return {
             'large': large_font
         }
+
+    def _get_timezone(self):
+        """Get timezone from main config with proper error handling."""
+        try:
+            timezone_str = 'UTC'
+            if hasattr(self.plugin_manager, 'config_manager') and self.plugin_manager.config_manager:
+                try:
+                    main_config = self.plugin_manager.config_manager.load_config()
+                    timezone_str = main_config.get('timezone', 'UTC')
+                except Exception as e:
+                    self.logger.warning(f"Could not load timezone from config: {e}, using UTC")
+            
+            if pytz:
+                return pytz.timezone(timezone_str)
+            return pytz.UTC if pytz else None
+        except Exception as e:
+            self.logger.warning(f"Error setting timezone: {e}, using UTC")
+            return pytz.UTC if pytz else None
+
+    def _parse_and_convert_time(self, start_time):
+        """
+        Parse start_time (string or datetime) and convert to local timezone.
+        
+        Args:
+            start_time: String ISO format datetime or datetime object
+            
+        Returns:
+            datetime object in local timezone, or None if parsing fails
+        """
+        try:
+            # Handle string input
+            if isinstance(start_time, str):
+                # Parse ISO format string, handling 'Z' timezone indicator
+                game_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            elif isinstance(start_time, datetime):
+                game_time = start_time
+            else:
+                self.logger.warning(f"Unexpected start_time type: {type(start_time)}")
+                return None
+            
+            # Ensure timezone info is present (assume UTC if missing)
+            if game_time.tzinfo is None:
+                game_time = game_time.replace(tzinfo=pytz.UTC)
+            
+            # Validate timezone before conversion
+            timezone = self.timezone
+            if timezone is None:
+                self.logger.warning("Timezone is None, using UTC as fallback")
+                timezone = pytz.UTC
+            
+            # Convert to local timezone
+            local_time = game_time.astimezone(timezone)
+            return local_time
+            
+        except Exception as e:
+            self.logger.debug(f"Error parsing start_time '{start_time}': {e}")
+            return None
 
     def _fetch_team_record(self, team_abbr: str, league: str) -> str:
         """Fetch team record from ESPN API."""
@@ -1093,17 +1154,11 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         odds = game.get('odds', {})
         if not odds:
             # Show just the game info without odds
-            game_time = game['start_time']
-            timezone_str = self.config.get('timezone', 'UTC')
-            try:
-                tz = pytz.timezone(timezone_str)
-            except pytz.exceptions.UnknownTimeZoneError:
-                tz = pytz.UTC
-            
-            if game_time.tzinfo is None:
-                game_time = game_time.replace(tzinfo=pytz.UTC)
-            local_time = game_time.astimezone(tz)
-            time_str = local_time.strftime("%I:%M%p").lstrip('0')
+            local_time = self._parse_and_convert_time(game.get('start_time'))
+            if local_time:
+                time_str = local_time.strftime("%I:%M%p").lstrip('0')
+            else:
+                time_str = "TBD"
             
             # Get team names with rankings for NCAA football
             away_team_name = game.get('away_team_name', game['away_team'])
@@ -1142,17 +1197,11 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         over_under = odds.get('over_under')
         
         # Format time
-        game_time = game['start_time']
-        timezone_str = self.config.get('timezone', 'UTC')
-        try:
-            tz = pytz.timezone(timezone_str)
-        except pytz.exceptions.UnknownTimeZoneError:
-            tz = pytz.UTC
-        
-        if game_time.tzinfo is None:
-            game_time = game_time.replace(tzinfo=pytz.UTC)
-        local_time = game_time.astimezone(tz)
-        time_str = local_time.strftime("%I:%M %p").lstrip('0')
+        local_time = self._parse_and_convert_time(game.get('start_time'))
+        if local_time:
+            time_str = local_time.strftime("%I:%M %p").lstrip('0')
+        else:
+            time_str = "TBD"
         
         # Build odds string
         odds_parts = [f"[{time_str}]"]
@@ -1337,16 +1386,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             logger.info(f"Game {game.get('id')}: Resized broadcast logo to {broadcast_logo.size}, column width: {broadcast_logo_col_width}")
 
         # Format date and time into 3 parts
-        game_time = game['start_time']
-        timezone_str = self.config.get('timezone', 'UTC')
-        try:
-            tz = pytz.timezone(timezone_str)
-        except pytz.exceptions.UnknownTimeZoneError:
-            tz = pytz.UTC
-        
-        if game_time.tzinfo is None:
-            game_time = game_time.replace(tzinfo=pytz.UTC)
-        local_time = game_time.astimezone(tz)
+        local_time = self._parse_and_convert_time(game.get('start_time'))
         
         # Check if this is a live game
         is_live = game.get('status_state') == 'in'
@@ -1433,10 +1473,16 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 time_text = live_info.get('clock', '')
         else:
             # Show regular date/time for non-live games
-            # Capitalize full day name, e.g., 'Tuesday'
-            day_text = local_time.strftime("%A")
-            date_text = local_time.strftime("%-m/%d")
-            time_text = local_time.strftime("%I:%M%p").lstrip('0')
+            if local_time:
+                # Capitalize full day name, e.g., 'Tuesday'
+                day_text = local_time.strftime("%A")
+                date_text = local_time.strftime("%-m/%d")
+                time_text = local_time.strftime("%I:%M%p").lstrip('0')
+            else:
+                # Fallback if time parsing failed
+                day_text = "TBD"
+                date_text = "TBD"
+                time_text = "TBD"
         
         # Datetime column width
         temp_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
