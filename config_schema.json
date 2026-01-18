@@ -42,7 +42,11 @@
     },
     "sort_order": {
       "type": "string",
-      "enum": ["soonest", "league", "team"],
+      "enum": [
+        "soonest",
+        "league",
+        "team"
+      ],
       "default": "soonest",
       "description": "Sort order for displaying games"
     },
@@ -50,11 +54,19 @@
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["nfl", "nba", "mlb", "ncaa_fb", "nhl"],
+        "enum": [
+          "nfl",
+          "nba",
+          "mlb",
+          "ncaa_fb",
+          "nhl"
+        ],
         "description": "League identifier"
       },
       "uniqueItems": true,
-      "default": ["nfl"],
+      "default": [
+        "nfl"
+      ],
       "x-widget": "checkbox-group",
       "x-options": {
         "labels": {
@@ -73,11 +85,6 @@
       "minimum": 300,
       "maximum": 86400,
       "description": "How often to fetch new odds data in seconds"
-    },
-    "live_priority": {
-      "type": "boolean",
-      "default": false,
-      "description": "Enable live priority takeover when plugin has live content"
     },
     "scroll_pixels_per_second": {
       "type": "number",
@@ -318,7 +325,10 @@
               "default": 8
             }
           },
-          "x-propertyOrder": ["font", "font_size"],
+          "x-propertyOrder": [
+            "font",
+            "font_size"
+          ],
           "additionalProperties": false
         },
         "odds_text": {
@@ -349,7 +359,10 @@
               "default": 8
             }
           },
-          "x-propertyOrder": ["font", "font_size"],
+          "x-propertyOrder": [
+            "font",
+            "font_size"
+          ],
           "additionalProperties": false
         },
         "datetime_text": {
@@ -380,14 +393,23 @@
               "default": 8
             }
           },
-          "x-propertyOrder": ["font", "font_size"],
+          "x-propertyOrder": [
+            "font",
+            "font_size"
+          ],
           "additionalProperties": false
         }
       },
-      "x-propertyOrder": ["team_text", "odds_text", "datetime_text"],
+      "x-propertyOrder": [
+        "team_text",
+        "odds_text",
+        "datetime_text"
+      ],
       "additionalProperties": false
     }
   },
   "additionalProperties": false,
-  "required": ["enabled"]
+  "required": [
+    "enabled"
+  ]
 }
