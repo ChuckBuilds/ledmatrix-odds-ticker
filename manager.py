@@ -2055,7 +2055,6 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             self._create_ticker_image() # Create the composite image
             
             # Log update interval status
-            has_live = self._has_live_games()
             next_interval = self._get_current_update_interval()
             if self.games_data:
                 live_count = sum(1 for game in self.games_data if game.get('status_state') == 'in')
