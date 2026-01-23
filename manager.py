@@ -186,6 +186,8 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self.sort_order = self.odds_ticker_config.get('sort_order', 'soonest')
         self.enabled_leagues = self.odds_ticker_config.get('enabled_leagues', ['nfl', 'nba', 'mlb'])
         self.update_interval = self.odds_ticker_config.get('update_interval', 3600)
+        self.live_game_update_interval = self.odds_ticker_config.get('live_game_update_interval', 60)
+        self.base_update_interval = self.update_interval  # Store base interval for switching
         # Scroll speed configuration - prefer display object (granular control), fallback to scroll_pixels_per_second for backward compatibility
         display_config = self.odds_ticker_config.get('display', {})
         if display_config and ('scroll_speed' in display_config or 'scroll_delay' in display_config):
@@ -2017,11 +2019,25 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             
         self._perform_update()
 
+    def _has_live_games(self) -> bool:
+        """Check if any games in the current games_data are live."""
+        if not self.games_data:
+            return False
+        return any(game.get('status_state') == 'in' for game in self.games_data)
+    
+    def _get_current_update_interval(self) -> int:
+        """Get the current update interval based on whether there are live games."""
+        if self._has_live_games():
+            return self.live_game_update_interval
+        return self.base_update_interval
+    
     def _perform_update(self):
         """Internal method to perform the actual update."""
         current_time = time.time()
-        if current_time - self.last_update < self.update_interval:
-            logger.debug(f"Odds ticker update interval not reached. Next update in {self.update_interval - (current_time - self.last_update)} seconds")
+        # Dynamically determine update interval based on live games
+        current_interval = self._get_current_update_interval()
+        if current_time - self.last_update < current_interval:
+            logger.debug(f"Odds ticker update interval not reached. Next update in {current_interval - (current_time - self.last_update)} seconds (interval: {current_interval}s, live games: {self._has_live_games()})")
             return
         
         try:
@@ -2038,10 +2054,14 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             self._insufficient_time_warning_logged = False
             self._create_ticker_image() # Create the composite image
             
+            # Log update interval status
+            next_interval = self._get_current_update_interval()
             if self.games_data:
-                logger.info(f"Updated odds ticker with {len(self.games_data)} games")
+                live_count = sum(1 for game in self.games_data if game.get('status_state') == 'in')
+                logger.info(f"Updated odds ticker with {len(self.games_data)} games ({live_count} live). Next update in {next_interval}s")
                 for i, game in enumerate(self.games_data[:3]):  # Log first 3 games
-                    logger.info(f"Game {i+1}: {game['away_team']} @ {game['home_team']} - {game['start_time']}")
+                    status = "LIVE" if game.get('status_state') == 'in' else game.get('status', 'scheduled')
+                    logger.info(f"Game {i+1}: {game['away_team']} @ {game['home_team']} - {status}")
             else:
                 logger.warning("No games found for odds ticker")
                 
