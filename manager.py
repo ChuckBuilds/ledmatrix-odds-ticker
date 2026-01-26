@@ -331,7 +331,8 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             main_scoreboard = main_config.get(scoreboard_key, {})
 
             # Prefer plugin config if set, otherwise use main config scoreboard settings
-            favorite_teams = plugin_league.get('favorite_teams') or main_scoreboard.get('favorite_teams', [])
+            # Use key presence check so explicit [] in plugin_league overrides main_scoreboard
+            favorite_teams = plugin_league['favorite_teams'] if 'favorite_teams' in plugin_league else main_scoreboard.get('favorite_teams', [])
             # For enabled: plugin config takes precedence if explicitly set
             enabled = plugin_league.get('enabled', main_scoreboard.get('enabled', False))
 
@@ -344,8 +345,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             main_scoreboard = main_config.get('soccer_scoreboard', {})
 
             # Prefer plugin config if set, otherwise use main config scoreboard settings
-            leagues = plugin_league.get('leagues') or main_scoreboard.get('leagues', [])
-            favorite_teams = plugin_league.get('favorite_teams') or main_scoreboard.get('favorite_teams', [])
+            # Use key presence check so explicit [] in plugin_league overrides main_scoreboard
+            leagues = plugin_league['leagues'] if 'leagues' in plugin_league else main_scoreboard.get('leagues', [])
+            favorite_teams = plugin_league['favorite_teams'] if 'favorite_teams' in plugin_league else main_scoreboard.get('favorite_teams', [])
             # For enabled: plugin config takes precedence if explicitly set
             enabled = plugin_league.get('enabled', main_scoreboard.get('enabled', False))
 
