@@ -799,8 +799,11 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         games_data = []
         now = datetime.now(timezone.utc)
         
-        logger.debug(f"Fetching upcoming games for {len(self.enabled_leagues)} enabled leagues")
-        logger.debug(f"Enabled leagues: {self.enabled_leagues}")
+        if not self.enabled_leagues:
+            logger.warning("No enabled leagues configured for odds ticker")
+            return games_data
+        
+        logger.info(f"Fetching upcoming games for {len(self.enabled_leagues)} enabled leagues: {self.enabled_leagues}")
         logger.debug(f"Show favorite teams only: {self.show_favorite_teams_only}")
         logger.debug(f"Show odds only: {self.show_odds_only}")
         
@@ -810,6 +813,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 continue
                 
             league_config = self.league_configs[league_key]
+            if not league_config.get('enabled', False):
+                logger.warning(f"League {league_key} is in enabled_leagues list but has enabled=False in config, skipping")
+                continue
             logger.debug(f"Processing league {league_key}: enabled={league_config['enabled']}")
             
             try:
@@ -858,11 +864,13 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 logger.debug(f"Added {len(league_games)} games from {league_key}")
                 
             except Exception as e:
-                logger.error(f"Error fetching games for {league_key}: {e}")
+                logger.error(f"Error fetching games for {league_key}: {e}", exc_info=True)
         
-        logger.debug(f"Total games found: {len(games_data)}")
+        logger.info(f"Total games found: {len(games_data)}")
         if games_data:
             logger.debug(f"Sample game data keys: {list(games_data[0].keys())}")
+        elif self.enabled_leagues:
+            logger.warning(f"No games found for any of the {len(self.enabled_leagues)} enabled leagues")
         return games_data
 
     def _fetch_league_games(self, league_config: Dict[str, Any], now: datetime) -> List[Dict[str, Any]]:
@@ -2199,6 +2207,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 
         except Exception as e:
             logger.error(f"Error updating odds ticker: {e}", exc_info=True)
+            logger.warning(f"Odds ticker update failed, games_data may be empty: {e}")
 
     def display(self, display_mode: str = None, force_clear: bool = False):
         """Display the odds ticker."""
