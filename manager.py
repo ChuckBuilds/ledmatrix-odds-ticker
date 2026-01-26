@@ -72,7 +72,7 @@ except ImportError:
             self.request_timeout = 30
             self.cache_ttl = 1800
         
-        def get_odds(self, sport, league, event_id, update_interval_seconds=None):
+        def get_odds(self, sport, league, event_id, update_interval_seconds=None, is_live=False):
             return None
 
 # Import background service and dynamic resolver
@@ -313,79 +313,129 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             buffer=self.duration_buffer
         )
         
-        # League configurations - exactly like original
+        # Get main app config for fallback to scoreboard settings
+        main_config = {}
+        if hasattr(plugin_manager, 'config_manager') and plugin_manager.config_manager:
+            try:
+                main_config = plugin_manager.config_manager.load_config() or {}
+            except Exception as e:
+                self.logger.warning(f"Could not load main config for league settings: {e}")
+
+        # Plugin's own leagues config from config_schema.json
+        plugin_leagues = self.odds_ticker_config.get('leagues', {})
+
+        # Helper to get league settings - prefer plugin config, fall back to main config scoreboard
+        def get_league_settings(league_key: str, scoreboard_key: str) -> tuple:
+            """Get favorite_teams and enabled for a league from plugin config or main config."""
+            plugin_league = plugin_leagues.get(league_key, {})
+            main_scoreboard = main_config.get(scoreboard_key, {})
+
+            # Prefer plugin config if set, otherwise use main config scoreboard settings
+            # Use key presence check so explicit [] in plugin_league overrides main_scoreboard
+            favorite_teams = plugin_league['favorite_teams'] if 'favorite_teams' in plugin_league else main_scoreboard.get('favorite_teams', [])
+            # For enabled: plugin config takes precedence if explicitly set
+            enabled = plugin_league.get('enabled', main_scoreboard.get('enabled', False))
+
+            return favorite_teams, enabled
+
+        # Helper to get soccer settings - includes leagues array
+        def get_soccer_settings() -> dict:
+            """Get leagues, favorite_teams, and enabled for soccer from plugin config or main config."""
+            plugin_league = plugin_leagues.get('soccer', {})
+            main_scoreboard = main_config.get('soccer_scoreboard', {})
+
+            # Prefer plugin config if set, otherwise use main config scoreboard settings
+            # Use key presence check so explicit [] in plugin_league overrides main_scoreboard
+            leagues = plugin_league['leagues'] if 'leagues' in plugin_league else main_scoreboard.get('leagues', [])
+            favorite_teams = plugin_league['favorite_teams'] if 'favorite_teams' in plugin_league else main_scoreboard.get('favorite_teams', [])
+            # For enabled: plugin config takes precedence if explicitly set
+            enabled = plugin_league.get('enabled', main_scoreboard.get('enabled', False))
+
+            return {'leagues': leagues, 'favorite_teams': favorite_teams, 'enabled': enabled}
+
+        # League configurations - use plugin config with fallback to main config scoreboards
+        nfl_teams, nfl_enabled = get_league_settings('nfl', 'nfl_scoreboard')
+        nba_teams, nba_enabled = get_league_settings('nba', 'nba_scoreboard')
+        mlb_teams, mlb_enabled = get_league_settings('mlb', 'mlb_scoreboard')
+        ncaa_fb_teams, ncaa_fb_enabled = get_league_settings('ncaa_fb', 'ncaa_fb_scoreboard')
+        nhl_teams, nhl_enabled = get_league_settings('nhl', 'nhl_scoreboard')
+        ncaam_teams, ncaam_enabled = get_league_settings('ncaam_basketball', 'ncaam_basketball_scoreboard')
+        milb_teams, milb_enabled = get_league_settings('milb', 'milb_scoreboard')
+        ncaa_baseball_teams, ncaa_baseball_enabled = get_league_settings('ncaa_baseball', 'ncaa_baseball_scoreboard')
+        soccer_settings = get_soccer_settings()
+
         self.league_configs = {
             'nfl': {
                 'sport': 'football',
                 'league': 'nfl',
-                'logo_league': 'nfl',  # ESPN API league identifier for logo downloading
+                'logo_league': 'nfl',
                 'logo_dir': 'assets/sports/nfl_logos',
-                'favorite_teams': config.get('nfl_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('nfl_scoreboard', {}).get('enabled', False)
+                'favorite_teams': nfl_teams,
+                'enabled': nfl_enabled
             },
             'nba': {
                 'sport': 'basketball',
                 'league': 'nba',
-                'logo_league': 'nba',  # ESPN API league identifier for logo downloading
+                'logo_league': 'nba',
                 'logo_dir': 'assets/sports/nba_logos',
-                'favorite_teams': config.get('nba_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('nba_scoreboard', {}).get('enabled', False)
+                'favorite_teams': nba_teams,
+                'enabled': nba_enabled
             },
             'mlb': {
                 'sport': 'baseball',
                 'league': 'mlb',
-                'logo_league': 'mlb',  # ESPN API league identifier for logo downloading
+                'logo_league': 'mlb',
                 'logo_dir': 'assets/sports/mlb_logos',
-                'favorite_teams': config.get('mlb_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('mlb_scoreboard', {}).get('enabled', False)
+                'favorite_teams': mlb_teams,
+                'enabled': mlb_enabled
             },
             'ncaa_fb': {
                 'sport': 'football',
                 'league': 'college-football',
-                'logo_league': 'ncaa_fb',  # ESPN API league identifier for logo downloading
+                'logo_league': 'ncaa_fb',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': config.get('ncaa_fb_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('ncaa_fb_scoreboard', {}).get('enabled', False)
+                'favorite_teams': ncaa_fb_teams,
+                'enabled': ncaa_fb_enabled
             },
             'milb': {
                 'sport': 'baseball',
                 'league': 'milb',
-                'logo_league': 'milb',  # ESPN API league identifier for logo downloading (if supported)
+                'logo_league': 'milb',
                 'logo_dir': 'assets/sports/milb_logos',
-                'favorite_teams': config.get('milb_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('milb_scoreboard', {}).get('enabled', False)
+                'favorite_teams': milb_teams,
+                'enabled': milb_enabled
             },
             'nhl': {
                 'sport': 'hockey',
                 'league': 'nhl',
-                'logo_league': 'nhl',  # ESPN API league identifier for logo downloading
+                'logo_league': 'nhl',
                 'logo_dir': 'assets/sports/nhl_logos',
-                'favorite_teams': config.get('nhl_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('nhl_scoreboard', {}).get('enabled', False)
+                'favorite_teams': nhl_teams,
+                'enabled': nhl_enabled
             },
             'ncaam_basketball': {
                 'sport': 'basketball',
                 'league': 'mens-college-basketball',
-                'logo_league': 'ncaam_basketball',  # ESPN API league identifier for logo downloading
+                'logo_league': 'ncaam_basketball',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': config.get('ncaam_basketball_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('ncaam_basketball_scoreboard', {}).get('enabled', False)
+                'favorite_teams': ncaam_teams,
+                'enabled': ncaam_enabled
             },
             'ncaa_baseball': {
                 'sport': 'baseball',
                 'league': 'college-baseball',
-                'logo_league': 'ncaa_baseball',  # ESPN API league identifier for logo downloading
+                'logo_league': 'ncaa_baseball',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': config.get('ncaa_baseball_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('ncaa_baseball_scoreboard', {}).get('enabled', False)
+                'favorite_teams': ncaa_baseball_teams,
+                'enabled': ncaa_baseball_enabled
             },
             'soccer': {
                 'sport': 'soccer',
-                'leagues': config.get('soccer_scoreboard', {}).get('leagues', []),
-                'logo_league': None,  # Soccer logos not supported by ESPN API
+                'leagues': soccer_settings['leagues'],
+                'logo_league': None,
                 'logo_dir': 'assets/sports/soccer_logos',
-                'favorite_teams': config.get('soccer_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('soccer_scoreboard', {}).get('enabled', False)
+                'favorite_teams': soccer_settings['favorite_teams'],
+                'enabled': soccer_settings['enabled']
             }
         }
         
@@ -618,6 +668,85 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         except Exception as e:
             logger.error(f"Error fetching team rankings: {e}")
             return {}
+
+    def get_odds(self, sport: str | None, league: str | None, event_id: str,
+                 update_interval_seconds: int = None, is_live: bool = False) -> Optional[Dict[str, Any]]:
+        """
+        Override base class method to support is_live parameter for cache key modification.
+        
+        For live games, appends '_live' to cache key to trigger odds_live cache strategy (2 min vs 30 min).
+        
+        Args:
+            sport: Sport name (e.g., 'football', 'basketball')
+            league: League name (e.g., 'nfl', 'nba')
+            event_id: ESPN event ID
+            update_interval_seconds: Override default update interval
+            is_live: Whether the game is currently live (uses shorter cache TTL)
+
+        Returns:
+            Dictionary containing odds data or None if unavailable
+        """
+        if sport is None or league is None:
+            raise ValueError("Sport and League cannot be None")
+
+        # Use provided interval or default
+        interval = update_interval_seconds or self.update_interval
+        # Include 'live' in cache key for live games to trigger odds_live cache strategy (2 min vs 30 min)
+        cache_key = f"odds_espn_{sport}_{league}_{event_id}_live" if is_live else f"odds_espn_{sport}_{league}_{event_id}"
+
+        # Check cache first
+        cached_data = self.cache_manager.get_with_auto_strategy(cache_key)
+
+        if cached_data:
+            self.logger.info(f"Using cached odds from ESPN for {cache_key}")
+            return cached_data
+
+        self.logger.info(f"Cache miss - fetching fresh odds from ESPN for {cache_key}")
+        
+        try:
+            # Map league names to ESPN API format
+            league_mapping = {
+                'ncaa_fb': 'college-football',
+                'nfl': 'nfl',
+                'nba': 'nba',
+                'mlb': 'mlb',
+                'nhl': 'nhl'
+            }
+            
+            espn_league = league_mapping.get(league, league)
+            url = f"{self.base_url}/{sport}/leagues/{espn_league}/events/{event_id}/competitions/{event_id}/odds"
+            self.logger.info(f"Requesting odds from URL: {url}")
+            
+            response = requests.get(url, timeout=self.request_timeout)
+            response.raise_for_status()
+            raw_data = response.json()
+            
+            # Increment API counter for odds data
+            increment_api_counter('odds', 1)
+            self.logger.debug(f"Received raw odds data from ESPN: {json.dumps(raw_data, indent=2)}")
+            
+            odds_data = self._extract_espn_data(raw_data)
+            if odds_data:
+                self.logger.info(f"Successfully extracted odds data: {odds_data}")
+            else:
+                self.logger.debug("No odds data available for this game")
+            
+            if odds_data:
+                self.cache_manager.set(cache_key, odds_data, ttl=interval)
+                self.logger.info(f"Saved odds data to cache for {cache_key} with TTL {interval}s")
+            else:
+                self.logger.debug(f"No odds data available for {cache_key}")
+                # Cache the fact that no odds are available to avoid repeated API calls
+                self.cache_manager.set(cache_key, {"no_odds": True}, ttl=interval)
+            
+            return odds_data
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error fetching odds from ESPN API for {cache_key}: {e}")
+        except json.JSONDecodeError:
+            self.logger.error(f"Error decoding JSON response from ESPN API for {cache_key}.")
+        
+        return self.cache_manager.get_with_auto_strategy(cache_key)
 
     def convert_image(self, logo_path: Path) -> Optional[Image.Image]:
         if logo_path.exists():
@@ -886,20 +1015,23 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                                 logger.debug(f"Game {game_id} starts in {time_until_game}. Setting odds update interval to {update_interval_seconds}s.")
                                 
                                 # Fetch odds with timeout protection to prevent freezing (if enabled)
+                                # Determine if game is live for cache strategy
+                                is_live_game = status_state == 'in'
                                 if self.fetch_odds:
                                     try:
                                         import threading
                                         import queue
-                                        
+
                                         result_queue = queue.Queue()
-                                        
+
                                         def fetch_odds():
                                             try:
                                                 odds_result = self.get_odds(
                                                     sport=sport,
                                                     league=league,
                                                     event_id=game_id,
-                                                    update_interval_seconds=update_interval_seconds
+                                                    update_interval_seconds=update_interval_seconds,
+                                                    is_live=is_live_game
                                                 )
                                                 result_queue.put(('success', odds_result))
                                             except Exception as e:
