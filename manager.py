@@ -337,6 +337,20 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
 
             return favorite_teams, enabled
 
+        # Helper to get soccer settings - includes leagues array
+        def get_soccer_settings() -> dict:
+            """Get leagues, favorite_teams, and enabled for soccer from plugin config or main config."""
+            plugin_league = plugin_leagues.get('soccer', {})
+            main_scoreboard = main_config.get('soccer_scoreboard', {})
+
+            # Prefer plugin config if set, otherwise use main config scoreboard settings
+            leagues = plugin_league.get('leagues') or main_scoreboard.get('leagues', [])
+            favorite_teams = plugin_league.get('favorite_teams') or main_scoreboard.get('favorite_teams', [])
+            # For enabled: plugin config takes precedence if explicitly set
+            enabled = plugin_league.get('enabled', main_scoreboard.get('enabled', False))
+
+            return {'leagues': leagues, 'favorite_teams': favorite_teams, 'enabled': enabled}
+
         # League configurations - use plugin config with fallback to main config scoreboards
         nfl_teams, nfl_enabled = get_league_settings('nfl', 'nfl_scoreboard')
         nba_teams, nba_enabled = get_league_settings('nba', 'nba_scoreboard')
@@ -344,6 +358,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         ncaa_fb_teams, ncaa_fb_enabled = get_league_settings('ncaa_fb', 'ncaa_fb_scoreboard')
         nhl_teams, nhl_enabled = get_league_settings('nhl', 'nhl_scoreboard')
         ncaam_teams, ncaam_enabled = get_league_settings('ncaam_basketball', 'ncaam_basketball_scoreboard')
+        milb_teams, milb_enabled = get_league_settings('milb', 'milb_scoreboard')
+        ncaa_baseball_teams, ncaa_baseball_enabled = get_league_settings('ncaa_baseball', 'ncaa_baseball_scoreboard')
+        soccer_settings = get_soccer_settings()
 
         self.league_configs = {
             'nfl': {
@@ -383,8 +400,8 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 'league': 'milb',
                 'logo_league': 'milb',
                 'logo_dir': 'assets/sports/milb_logos',
-                'favorite_teams': main_config.get('milb_scoreboard', {}).get('favorite_teams', []),
-                'enabled': main_config.get('milb_scoreboard', {}).get('enabled', False)
+                'favorite_teams': milb_teams,
+                'enabled': milb_enabled
             },
             'nhl': {
                 'sport': 'hockey',
@@ -407,16 +424,16 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 'league': 'college-baseball',
                 'logo_league': 'ncaa_baseball',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': main_config.get('ncaa_baseball_scoreboard', {}).get('favorite_teams', []),
-                'enabled': main_config.get('ncaa_baseball_scoreboard', {}).get('enabled', False)
+                'favorite_teams': ncaa_baseball_teams,
+                'enabled': ncaa_baseball_enabled
             },
             'soccer': {
                 'sport': 'soccer',
-                'leagues': main_config.get('soccer_scoreboard', {}).get('leagues', []),
+                'leagues': soccer_settings['leagues'],
                 'logo_league': None,
                 'logo_dir': 'assets/sports/soccer_logos',
-                'favorite_teams': main_config.get('soccer_scoreboard', {}).get('favorite_teams', []),
-                'enabled': main_config.get('soccer_scoreboard', {}).get('enabled', False)
+                'favorite_teams': soccer_settings['favorite_teams'],
+                'enabled': soccer_settings['enabled']
             }
         }
         
