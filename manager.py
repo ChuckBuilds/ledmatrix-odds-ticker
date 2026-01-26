@@ -72,7 +72,7 @@ except ImportError:
             self.request_timeout = 30
             self.cache_ttl = 1800
         
-        def get_odds(self, sport, league, event_id, update_interval_seconds=None):
+        def get_odds(self, sport, league, event_id, update_interval_seconds=None, is_live=False):
             return None
 
 # Import background service and dynamic resolver
@@ -917,20 +917,23 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                                 logger.debug(f"Game {game_id} starts in {time_until_game}. Setting odds update interval to {update_interval_seconds}s.")
                                 
                                 # Fetch odds with timeout protection to prevent freezing (if enabled)
+                                # Determine if game is live for cache strategy
+                                is_live_game = status_state == 'in'
                                 if self.fetch_odds:
                                     try:
                                         import threading
                                         import queue
-                                        
+
                                         result_queue = queue.Queue()
-                                        
+
                                         def fetch_odds():
                                             try:
                                                 odds_result = self.get_odds(
                                                     sport=sport,
                                                     league=league,
                                                     event_id=game_id,
-                                                    update_interval_seconds=update_interval_seconds
+                                                    update_interval_seconds=update_interval_seconds,
+                                                    is_live=is_live_game
                                                 )
                                                 result_queue.put(('success', odds_result))
                                             except Exception as e:

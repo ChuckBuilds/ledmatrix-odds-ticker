@@ -295,17 +295,19 @@ class OddsDataFetcher:
         """Fetch odds for a specific game."""
         if not self.fetch_odds:
             return None
-            
+
         try:
             league_config = self.league_configs.get(league_key, {})
             sport = league_config.get('sport', '')
             league = league_config.get('league', '')
             event_id = game.get('id', '')
-            
+
             if not sport or not league or not event_id:
                 return None
-            
-            odds_data = self.odds_manager.get_odds(sport, league, event_id)
+
+            # Check if game is live for cache strategy (2 min vs 30 min cache)
+            is_live = game.get('status_state') == 'in' or game.get('is_live', False)
+            odds_data = self.odds_manager.get_odds(sport, league, event_id, is_live=is_live)
             return odds_data
             
         except Exception as e:
