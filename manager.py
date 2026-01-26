@@ -313,79 +313,110 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             buffer=self.duration_buffer
         )
         
-        # League configurations - exactly like original
+        # Get main app config for fallback to scoreboard settings
+        main_config = {}
+        if hasattr(plugin_manager, 'config_manager') and plugin_manager.config_manager:
+            try:
+                main_config = plugin_manager.config_manager.load_config() or {}
+            except Exception as e:
+                self.logger.warning(f"Could not load main config for league settings: {e}")
+
+        # Plugin's own leagues config from config_schema.json
+        plugin_leagues = self.odds_ticker_config.get('leagues', {})
+
+        # Helper to get league settings - prefer plugin config, fall back to main config scoreboard
+        def get_league_settings(league_key: str, scoreboard_key: str) -> tuple:
+            """Get favorite_teams and enabled for a league from plugin config or main config."""
+            plugin_league = plugin_leagues.get(league_key, {})
+            main_scoreboard = main_config.get(scoreboard_key, {})
+
+            # Prefer plugin config if set, otherwise use main config scoreboard settings
+            favorite_teams = plugin_league.get('favorite_teams') or main_scoreboard.get('favorite_teams', [])
+            # For enabled: plugin config takes precedence if explicitly set
+            enabled = plugin_league.get('enabled', main_scoreboard.get('enabled', False))
+
+            return favorite_teams, enabled
+
+        # League configurations - use plugin config with fallback to main config scoreboards
+        nfl_teams, nfl_enabled = get_league_settings('nfl', 'nfl_scoreboard')
+        nba_teams, nba_enabled = get_league_settings('nba', 'nba_scoreboard')
+        mlb_teams, mlb_enabled = get_league_settings('mlb', 'mlb_scoreboard')
+        ncaa_fb_teams, ncaa_fb_enabled = get_league_settings('ncaa_fb', 'ncaa_fb_scoreboard')
+        nhl_teams, nhl_enabled = get_league_settings('nhl', 'nhl_scoreboard')
+        ncaam_teams, ncaam_enabled = get_league_settings('ncaam_basketball', 'ncaam_basketball_scoreboard')
+
         self.league_configs = {
             'nfl': {
                 'sport': 'football',
                 'league': 'nfl',
-                'logo_league': 'nfl',  # ESPN API league identifier for logo downloading
+                'logo_league': 'nfl',
                 'logo_dir': 'assets/sports/nfl_logos',
-                'favorite_teams': config.get('nfl_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('nfl_scoreboard', {}).get('enabled', False)
+                'favorite_teams': nfl_teams,
+                'enabled': nfl_enabled
             },
             'nba': {
                 'sport': 'basketball',
                 'league': 'nba',
-                'logo_league': 'nba',  # ESPN API league identifier for logo downloading
+                'logo_league': 'nba',
                 'logo_dir': 'assets/sports/nba_logos',
-                'favorite_teams': config.get('nba_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('nba_scoreboard', {}).get('enabled', False)
+                'favorite_teams': nba_teams,
+                'enabled': nba_enabled
             },
             'mlb': {
                 'sport': 'baseball',
                 'league': 'mlb',
-                'logo_league': 'mlb',  # ESPN API league identifier for logo downloading
+                'logo_league': 'mlb',
                 'logo_dir': 'assets/sports/mlb_logos',
-                'favorite_teams': config.get('mlb_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('mlb_scoreboard', {}).get('enabled', False)
+                'favorite_teams': mlb_teams,
+                'enabled': mlb_enabled
             },
             'ncaa_fb': {
                 'sport': 'football',
                 'league': 'college-football',
-                'logo_league': 'ncaa_fb',  # ESPN API league identifier for logo downloading
+                'logo_league': 'ncaa_fb',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': config.get('ncaa_fb_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('ncaa_fb_scoreboard', {}).get('enabled', False)
+                'favorite_teams': ncaa_fb_teams,
+                'enabled': ncaa_fb_enabled
             },
             'milb': {
                 'sport': 'baseball',
                 'league': 'milb',
-                'logo_league': 'milb',  # ESPN API league identifier for logo downloading (if supported)
+                'logo_league': 'milb',
                 'logo_dir': 'assets/sports/milb_logos',
-                'favorite_teams': config.get('milb_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('milb_scoreboard', {}).get('enabled', False)
+                'favorite_teams': main_config.get('milb_scoreboard', {}).get('favorite_teams', []),
+                'enabled': main_config.get('milb_scoreboard', {}).get('enabled', False)
             },
             'nhl': {
                 'sport': 'hockey',
                 'league': 'nhl',
-                'logo_league': 'nhl',  # ESPN API league identifier for logo downloading
+                'logo_league': 'nhl',
                 'logo_dir': 'assets/sports/nhl_logos',
-                'favorite_teams': config.get('nhl_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('nhl_scoreboard', {}).get('enabled', False)
+                'favorite_teams': nhl_teams,
+                'enabled': nhl_enabled
             },
             'ncaam_basketball': {
                 'sport': 'basketball',
                 'league': 'mens-college-basketball',
-                'logo_league': 'ncaam_basketball',  # ESPN API league identifier for logo downloading
+                'logo_league': 'ncaam_basketball',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': config.get('ncaam_basketball_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('ncaam_basketball_scoreboard', {}).get('enabled', False)
+                'favorite_teams': ncaam_teams,
+                'enabled': ncaam_enabled
             },
             'ncaa_baseball': {
                 'sport': 'baseball',
                 'league': 'college-baseball',
-                'logo_league': 'ncaa_baseball',  # ESPN API league identifier for logo downloading
+                'logo_league': 'ncaa_baseball',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': config.get('ncaa_baseball_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('ncaa_baseball_scoreboard', {}).get('enabled', False)
+                'favorite_teams': main_config.get('ncaa_baseball_scoreboard', {}).get('favorite_teams', []),
+                'enabled': main_config.get('ncaa_baseball_scoreboard', {}).get('enabled', False)
             },
             'soccer': {
                 'sport': 'soccer',
-                'leagues': config.get('soccer_scoreboard', {}).get('leagues', []),
-                'logo_league': None,  # Soccer logos not supported by ESPN API
+                'leagues': main_config.get('soccer_scoreboard', {}).get('leagues', []),
+                'logo_league': None,
                 'logo_dir': 'assets/sports/soccer_logos',
-                'favorite_teams': config.get('soccer_scoreboard', {}).get('favorite_teams', []),
-                'enabled': config.get('soccer_scoreboard', {}).get('enabled', False)
+                'favorite_teams': main_config.get('soccer_scoreboard', {}).get('favorite_teams', []),
+                'enabled': main_config.get('soccer_scoreboard', {}).get('enabled', False)
             }
         }
         
