@@ -669,6 +669,85 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             logger.error(f"Error fetching team rankings: {e}")
             return {}
 
+    def get_odds(self, sport: str | None, league: str | None, event_id: str,
+                 update_interval_seconds: int = None, is_live: bool = False) -> Optional[Dict[str, Any]]:
+        """
+        Override base class method to support is_live parameter for cache key modification.
+        
+        For live games, appends '_live' to cache key to trigger odds_live cache strategy (2 min vs 30 min).
+        
+        Args:
+            sport: Sport name (e.g., 'football', 'basketball')
+            league: League name (e.g., 'nfl', 'nba')
+            event_id: ESPN event ID
+            update_interval_seconds: Override default update interval
+            is_live: Whether the game is currently live (uses shorter cache TTL)
+
+        Returns:
+            Dictionary containing odds data or None if unavailable
+        """
+        if sport is None or league is None:
+            raise ValueError("Sport and League cannot be None")
+
+        # Use provided interval or default
+        interval = update_interval_seconds or self.update_interval
+        # Include 'live' in cache key for live games to trigger odds_live cache strategy (2 min vs 30 min)
+        cache_key = f"odds_espn_{sport}_{league}_{event_id}_live" if is_live else f"odds_espn_{sport}_{league}_{event_id}"
+
+        # Check cache first
+        cached_data = self.cache_manager.get_with_auto_strategy(cache_key)
+
+        if cached_data:
+            self.logger.info(f"Using cached odds from ESPN for {cache_key}")
+            return cached_data
+
+        self.logger.info(f"Cache miss - fetching fresh odds from ESPN for {cache_key}")
+        
+        try:
+            # Map league names to ESPN API format
+            league_mapping = {
+                'ncaa_fb': 'college-football',
+                'nfl': 'nfl',
+                'nba': 'nba',
+                'mlb': 'mlb',
+                'nhl': 'nhl'
+            }
+            
+            espn_league = league_mapping.get(league, league)
+            url = f"{self.base_url}/{sport}/leagues/{espn_league}/events/{event_id}/competitions/{event_id}/odds"
+            self.logger.info(f"Requesting odds from URL: {url}")
+            
+            response = requests.get(url, timeout=self.request_timeout)
+            response.raise_for_status()
+            raw_data = response.json()
+            
+            # Increment API counter for odds data
+            increment_api_counter('odds', 1)
+            self.logger.debug(f"Received raw odds data from ESPN: {json.dumps(raw_data, indent=2)}")
+            
+            odds_data = self._extract_espn_data(raw_data)
+            if odds_data:
+                self.logger.info(f"Successfully extracted odds data: {odds_data}")
+            else:
+                self.logger.debug("No odds data available for this game")
+            
+            if odds_data:
+                self.cache_manager.set(cache_key, odds_data, ttl=interval)
+                self.logger.info(f"Saved odds data to cache for {cache_key} with TTL {interval}s")
+            else:
+                self.logger.debug(f"No odds data available for {cache_key}")
+                # Cache the fact that no odds are available to avoid repeated API calls
+                self.cache_manager.set(cache_key, {"no_odds": True}, ttl=interval)
+            
+            return odds_data
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error fetching odds from ESPN API for {cache_key}: {e}")
+        except json.JSONDecodeError:
+            self.logger.error(f"Error decoding JSON response from ESPN API for {cache_key}.")
+        
+        return self.cache_manager.get_with_auto_strategy(cache_key)
+
     def convert_image(self, logo_path: Path) -> Optional[Image.Image]:
         if logo_path.exists():
             logo = Image.open(logo_path)
