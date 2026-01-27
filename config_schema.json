@@ -59,6 +59,7 @@
           "nba",
           "mlb",
           "ncaa_fb",
+          "ncaam_basketball",
           "nhl"
         ],
         "description": "League identifier"
@@ -74,6 +75,7 @@
           "nba": "NBA",
           "mlb": "MLB",
           "ncaa_fb": "NCAA Football",
+          "ncaam_basketball": "NCAA Men's Basketball",
           "nhl": "NHL"
         }
       },
