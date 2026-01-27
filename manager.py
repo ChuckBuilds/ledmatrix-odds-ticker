@@ -835,7 +835,8 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             
             try:
                 # Fetch all upcoming games for this league
-                all_games = self._fetch_league_games(league_config, now)
+                # Pass league_key so it can be stored as canonical lookup value in game dict
+                all_games = self._fetch_league_games(league_config, now, league_key)
                 logger.debug(f"Found {len(all_games)} games for {league_key}")
                 league_games = []
                 
@@ -888,7 +889,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             logger.warning(f"No games found for any of the {len(self.enabled_leagues)} enabled leagues")
         return games_data
 
-    def _fetch_league_games(self, league_config: Dict[str, Any], now: datetime) -> List[Dict[str, Any]]:
+    def _fetch_league_games(self, league_config: Dict[str, Any], now: datetime, canonical_league_key: str) -> List[Dict[str, Any]]:
         """Fetch upcoming games for a specific league using day-by-day approach."""
         games = []
         yesterday = now - timedelta(days=1)
@@ -1114,7 +1115,8 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                                     'odds': odds_data if has_odds else None,
                                     'broadcast_info': broadcast_info,
                                     'logo_dir': league_config.get('logo_dir', f'assets/sports/{league.lower()}_logos'),
-                                    'league': league_config.get('logo_league', league),  # Use logo_league for downloading
+                                    'league': canonical_league_key,  # Canonical lookup key (e.g., 'nfl', 'nba', 'soccer')
+                                    'logo_league': league_config.get('logo_league'),  # For logo downloads (can be None for soccer)
                                     'status': status,
                                     'status_state': status_state,
                                     'live_info': live_info
@@ -1459,8 +1461,10 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         datetime_font = self.datetime_font
 
         # Get team logos (with automatic download if missing)
-        home_logo = self._get_team_logo(game["league"], game['home_id'], game['home_team'], game['logo_dir'])
-        away_logo = self._get_team_logo(game["league"], game['away_id'], game['away_team'], game['logo_dir'])
+        # Use logo_league for downloads, fallback to canonical league if logo_league is None
+        logo_league = game.get('logo_league', game['league'])
+        home_logo = self._get_team_logo(logo_league, game['home_id'], game['home_team'], game['logo_dir'])
+        away_logo = self._get_team_logo(logo_league, game['away_id'], game['away_team'], game['logo_dir'])
         broadcast_logo = None
         
         # Enhanced broadcast logo debugging
