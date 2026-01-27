@@ -5,7 +5,7 @@ Handles fetching odds data from various sports APIs and managing
 background data fetching for the odds ticker display.
 
 Features:
-- Multi-sport odds fetching (NFL, NBA, MLB, NCAA Football, NCAA Basketball)
+- Multi-sport odds fetching (NFL, NBA, MLB, NHL, MiLB, NCAA Football, NCAA Basketball, NCAA Baseball)
 - Background data service integration
 - Caching and error handling
 - Team record and ranking fetching
@@ -39,15 +39,32 @@ class OddsDataFetcher:
         self.background_service = background_service
         self.dynamic_resolver = dynamic_resolver
         self.config = config
-        
-        # Configuration
-        self.request_timeout = config.get('request_timeout', 30)
-        self.future_fetch_days = config.get('future_fetch_days', 7)
-        self.show_favorite_teams_only = config.get('show_favorite_teams_only', False)
-        self.games_per_favorite_team = config.get('games_per_favorite_team', 1)
-        self.max_games_per_league = config.get('max_games_per_league', 5)
-        self.fetch_odds = config.get('fetch_odds', True)
-        self.enabled_leagues = config.get('enabled_leagues', ['nfl', 'nba', 'mlb'])
+
+        # Get nested config sections (support both old flat and new nested structure)
+        data_settings = config.get('data_settings', {})
+        filtering = config.get('filtering', {})
+        leagues_config = config.get('leagues', {})
+
+        # Configuration - try new nested structure first, fall back to flat structure
+        self.request_timeout = data_settings.get('request_timeout', config.get('request_timeout', 30))
+        self.future_fetch_days = data_settings.get('future_fetch_days', config.get('future_fetch_days', 7))
+        self.show_favorite_teams_only = filtering.get('show_favorite_teams_only', config.get('show_favorite_teams_only', False))
+        self.games_per_favorite_team = filtering.get('games_per_favorite_team', config.get('games_per_favorite_team', 1))
+        self.max_games_per_league = filtering.get('max_games_per_league', config.get('max_games_per_league', 5))
+        self.fetch_odds = data_settings.get('fetch_odds', config.get('fetch_odds', True))
+
+        # Build enabled_leagues from individual league enabled flags
+        # Support both new nested structure (leagues.nfl.enabled) and old flat structure (enabled_leagues array)
+        if leagues_config:
+            self.enabled_leagues = [
+                league_key for league_key in ['nfl', 'nba', 'mlb', 'nhl', 'milb', 'ncaa_fb', 'ncaam_basketball', 'ncaa_baseball']
+                if leagues_config.get(league_key, {}).get('enabled', False)
+            ]
+        else:
+            self.enabled_leagues = config.get('enabled_leagues', ['nfl', 'nba', 'mlb'])
+
+        # Store leagues config for easy access
+        self.leagues_config = leagues_config
         
         # League configurations
         self.league_configs = self._setup_league_configs()
@@ -64,46 +81,76 @@ class OddsDataFetcher:
     
     def _setup_league_configs(self) -> Dict[str, Dict]:
         """Setup league configurations with dynamic team resolution."""
+        # Helper to get league config from either new nested or old flat structure
+        def get_league_config(league_key):
+            if self.leagues_config:
+                return self.leagues_config.get(league_key, {})
+            return self.config.get(league_key, {})
+
         league_configs = {
             'nfl': {
                 'sport': 'football',
                 'league': 'nfl',
                 'logo_league': 'nfl',
                 'logo_dir': 'assets/sports/nfl_logos',
-                'favorite_teams': self.config.get('nfl', {}).get('favorite_teams', []),
-                'enabled': self.config.get('nfl', {}).get('enabled', False)
+                'favorite_teams': get_league_config('nfl').get('favorite_teams', []),
+                'enabled': get_league_config('nfl').get('enabled', False)
             },
             'nba': {
                 'sport': 'basketball',
                 'league': 'nba',
                 'logo_league': 'nba',
                 'logo_dir': 'assets/sports/nba_logos',
-                'favorite_teams': self.config.get('nba', {}).get('favorite_teams', []),
-                'enabled': self.config.get('nba', {}).get('enabled', False)
+                'favorite_teams': get_league_config('nba').get('favorite_teams', []),
+                'enabled': get_league_config('nba').get('enabled', False)
             },
             'mlb': {
                 'sport': 'baseball',
                 'league': 'mlb',
                 'logo_league': 'mlb',
                 'logo_dir': 'assets/sports/mlb_logos',
-                'favorite_teams': self.config.get('mlb', {}).get('favorite_teams', []),
-                'enabled': self.config.get('mlb', {}).get('enabled', False)
+                'favorite_teams': get_league_config('mlb').get('favorite_teams', []),
+                'enabled': get_league_config('mlb').get('enabled', False)
+            },
+            'nhl': {
+                'sport': 'hockey',
+                'league': 'nhl',
+                'logo_league': 'nhl',
+                'logo_dir': 'assets/sports/nhl_logos',
+                'favorite_teams': get_league_config('nhl').get('favorite_teams', []),
+                'enabled': get_league_config('nhl').get('enabled', False)
+            },
+            'milb': {
+                'sport': 'baseball',
+                'league': 'milb',
+                'logo_league': 'milb',
+                'logo_dir': 'assets/sports/milb_logos',
+                'favorite_teams': get_league_config('milb').get('favorite_teams', []),
+                'enabled': get_league_config('milb').get('enabled', False)
             },
             'ncaa_fb': {
                 'sport': 'football',
                 'league': 'college-football',
                 'logo_league': 'ncaa_fb',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': self.config.get('ncaa_fb', {}).get('favorite_teams', []),
-                'enabled': self.config.get('ncaa_fb', {}).get('enabled', False)
+                'favorite_teams': get_league_config('ncaa_fb').get('favorite_teams', []),
+                'enabled': get_league_config('ncaa_fb').get('enabled', False)
             },
             'ncaam_basketball': {
                 'sport': 'basketball',
                 'league': 'mens-college-basketball',
                 'logo_league': 'ncaam_basketball',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': self.config.get('ncaam_basketball', {}).get('favorite_teams', []),
-                'enabled': self.config.get('ncaam_basketball', {}).get('enabled', False)
+                'favorite_teams': get_league_config('ncaam_basketball').get('favorite_teams', []),
+                'enabled': get_league_config('ncaam_basketball').get('enabled', False)
+            },
+            'ncaa_baseball': {
+                'sport': 'baseball',
+                'league': 'college-baseball',
+                'logo_league': 'ncaa_baseball',
+                'logo_dir': 'assets/sports/ncaa_logos',
+                'favorite_teams': get_league_config('ncaa_baseball').get('favorite_teams', []),
+                'enabled': get_league_config('ncaa_baseball').get('enabled', False)
             }
         }
         
