@@ -853,7 +853,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                         team_games.sort(key=lambda x: x.get('start_time', datetime.max))
                         # Only keep games with odds if show_odds_only is set
                         if self.show_odds_only:
-                            team_games = [g for g in team_games if g.get('odds')]
+                            team_games = [g for g in team_games if g.get('odds') and not g.get('odds', {}).get('no_odds', False)]
                             logger.debug(f"After odds filter: {len(team_games)} games for team {team}")
                         # Take the next N games for this team
                         for g in team_games[:self.games_per_favorite_team]:
@@ -866,7 +866,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                     # Show all games, optionally only those with odds
                     league_games = all_games
                     if self.show_odds_only:
-                        league_games = [g for g in league_games if g.get('odds')]
+                        league_games = [g for g in league_games if g.get('odds') and not g.get('odds', {}).get('no_odds', False)]
                     # Sort by start_time
                     league_games.sort(key=lambda x: x.get('start_time', datetime.max))
                     league_games = league_games[:self.max_games_per_league]
@@ -2220,13 +2220,22 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             return
         
         try:
+            # Reload config settings that can change at runtime
+            self.show_odds_only = self.odds_ticker_config.get('show_odds_only', False)
+            self.loop = self.odds_ticker_config.get('loop', True)
+            
             logger.debug("Updating odds ticker data")
             logger.debug(f"Enabled leagues: {self.enabled_leagues}")
             logger.debug(f"Show favorite teams only: {self.show_favorite_teams_only}")
+            logger.debug(f"Show odds only: {self.show_odds_only}")
+            logger.debug(f"Loop: {self.loop}")
             
             self.games_data = self._fetch_upcoming_games()
             self.last_update = current_time
-            self.scroll_helper.reset_scroll()
+            # Only reset scroll if looping is enabled, or if scroll hasn't completed yet
+            # This prevents resetting scroll when loop=False and scroll is already complete
+            if self.loop or not (hasattr(self, 'scroll_helper') and self.scroll_helper.is_scroll_complete()):
+                self.scroll_helper.reset_scroll()
             self.current_game_index = 0
             # Reset logging flags when updating data
             self._end_reached_logged = False
