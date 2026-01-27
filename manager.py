@@ -2150,13 +2150,58 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self._perform_update()
 
     def _has_live_games(self) -> bool:
-        """Check if any games in the current games_data are live."""
-        if not self.games_data:
-            return False
-        return any(game.get('status_state') == 'in' for game in self.games_data)
+        """Check if any games are live or starting soon by checking both current games_data and cached scoreboard data."""
+        # First check current games_data for live games
+        if self.games_data:
+            # Check if any games are currently live
+            if any(game.get('status_state') == 'in' for game in self.games_data):
+                return True
+            
+            # Also check if any games are starting within the next few minutes
+            # This helps catch games that just went live
+            now = datetime.now(timezone.utc)
+            for game in self.games_data:
+                start_time = game.get('start_time')
+                if start_time and isinstance(start_time, datetime):
+                    # If game starts within the next 5 minutes, treat as "live" for update purposes
+                    time_until_start = (start_time - now).total_seconds()
+                    if -300 <= time_until_start <= 300:  # Within 5 minutes before or after start
+                        return True
+        
+        # Also check cached scoreboard data for today's games to catch live games
+        # that might not be in games_data yet
+        try:
+            now = datetime.now(timezone.utc)
+            today_str = now.strftime("%Y%m%d")
+            
+            for league_key, config in self.league_configs.items():
+                if league_key not in self.enabled_leagues:
+                    continue
+                
+                sport = config.get('sport')
+                league = config.get('league')
+                if not sport or not league:
+                    continue
+                
+                # Check cached scoreboard data for today
+                cache_key = f"scoreboard_data_{sport}_{league}_{today_str}"
+                cached_data = self.cache_manager.get(cache_key, max_age=300)  # 5 min max age
+                
+                if cached_data:
+                    events = cached_data.get('events', [])
+                    for event in events:
+                        status = event.get('status', {})
+                        status_type = status.get('type', {})
+                        if status_type.get('state') == 'in':
+                            # Found a live game in cached data
+                            return True
+        except Exception as e:
+            logger.debug(f"Error checking cached scoreboard for live games: {e}")
+        
+        return False
     
     def _get_current_update_interval(self) -> int:
-        """Get the current update interval based on whether there are live games."""
+        """Get the current update interval based on whether there are live games or games starting soon."""
         if self._has_live_games():
             return self.live_game_update_interval
         return self.base_update_interval
