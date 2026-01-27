@@ -260,6 +260,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         # Enable scrolling for high FPS mode in display controller
         # This tells the display controller to use 8ms intervals (125 FPS) instead of slower updates
         self.enable_scrolling = True
+        logger.info(f"High FPS scrolling enabled: enable_scrolling={self.enable_scrolling}, target_fps={self.target_fps}")
         
         # Initialize ScrollHelper for scrolling functionality
         display_width = self.display_manager.matrix.width if hasattr(self.display_manager, 'matrix') else 128
@@ -622,19 +623,33 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             logger.error(f"Error fetching record for {team_abbr} in league {league}: {e}")
             return "N/A"
 
-    def _fetch_team_rankings(self) -> Dict[str, int]:
-        """Fetch current team rankings from ESPN API for NCAA football."""
+    def _fetch_team_rankings(self, league_key: str = 'ncaa_fb') -> Dict[str, int]:
+        """Fetch current team rankings from ESPN API for NCAA football or basketball."""
         current_time = time.time()
         
+        # Use separate cache keys for different leagues
+        cache_key = f'_team_rankings_cache_{league_key}'
+        timestamp_key = f'_rankings_cache_timestamp_{league_key}'
+        
         # Check if we have cached rankings that are still valid
-        if (hasattr(self, '_team_rankings_cache') and 
-            hasattr(self, '_rankings_cache_timestamp') and
-            self._team_rankings_cache and 
-            current_time - self._rankings_cache_timestamp < 3600):  # Cache for 1 hour
-            return self._team_rankings_cache
+        if (hasattr(self, cache_key) and 
+            hasattr(self, timestamp_key) and
+            getattr(self, cache_key, None) and 
+            current_time - getattr(self, timestamp_key, 0) < 3600):  # Cache for 1 hour
+            return getattr(self, cache_key, {})
         
         try:
-            rankings_url = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings"
+            # Map league keys to ESPN API paths
+            rankings_urls = {
+                'ncaa_fb': "https://site.api.espn.com/apis/site/v2/sports/football/college-football/rankings",
+                'ncaam_basketball': "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/rankings"
+            }
+            
+            rankings_url = rankings_urls.get(league_key)
+            if not rankings_url:
+                logger.warning(f"No rankings URL configured for league: {league_key}")
+                return {}
+            
             response = requests.get(rankings_url, timeout=self.request_timeout)
             response.raise_for_status()
             data = response.json()
@@ -659,14 +674,14 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                         rankings[team_abbr] = current_rank
             
             # Cache the results
-            self._team_rankings_cache = rankings
-            self._rankings_cache_timestamp = current_time
+            setattr(self, cache_key, rankings)
+            setattr(self, timestamp_key, current_time)
             
-            logger.debug(f"Fetched rankings for {len(rankings)} teams")
+            logger.debug(f"Fetched rankings for {len(rankings)} teams from {league_key}")
             return rankings
             
         except Exception as e:
-            logger.error(f"Error fetching team rankings: {e}")
+            logger.error(f"Error fetching team rankings for {league_key}: {e}")
             return {}
 
     def get_odds(self, sport: str | None, league: str | None, event_id: str,
@@ -799,8 +814,11 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         games_data = []
         now = datetime.now(timezone.utc)
         
-        logger.debug(f"Fetching upcoming games for {len(self.enabled_leagues)} enabled leagues")
-        logger.debug(f"Enabled leagues: {self.enabled_leagues}")
+        if not self.enabled_leagues:
+            logger.warning("No enabled leagues configured for odds ticker")
+            return games_data
+        
+        logger.info(f"Fetching upcoming games for {len(self.enabled_leagues)} enabled leagues: {self.enabled_leagues}")
         logger.debug(f"Show favorite teams only: {self.show_favorite_teams_only}")
         logger.debug(f"Show odds only: {self.show_odds_only}")
         
@@ -810,11 +828,15 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 continue
                 
             league_config = self.league_configs[league_key]
+            if not league_config.get('enabled', False):
+                logger.warning(f"League {league_key} is in enabled_leagues list but has enabled=False in config, skipping")
+                continue
             logger.debug(f"Processing league {league_key}: enabled={league_config['enabled']}")
             
             try:
                 # Fetch all upcoming games for this league
-                all_games = self._fetch_league_games(league_config, now)
+                # Pass league_key so it can be stored as canonical lookup value in game dict
+                all_games = self._fetch_league_games(league_config, now, league_key)
                 logger.debug(f"Found {len(all_games)} games for {league_key}")
                 league_games = []
                 
@@ -831,7 +853,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                         team_games.sort(key=lambda x: x.get('start_time', datetime.max))
                         # Only keep games with odds if show_odds_only is set
                         if self.show_odds_only:
-                            team_games = [g for g in team_games if g.get('odds')]
+                            team_games = [g for g in team_games if g.get('odds') and not g.get('odds', {}).get('no_odds', False)]
                             logger.debug(f"After odds filter: {len(team_games)} games for team {team}")
                         # Take the next N games for this team
                         for g in team_games[:self.games_per_favorite_team]:
@@ -844,7 +866,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                     # Show all games, optionally only those with odds
                     league_games = all_games
                     if self.show_odds_only:
-                        league_games = [g for g in league_games if g.get('odds')]
+                        league_games = [g for g in league_games if g.get('odds') and not g.get('odds', {}).get('no_odds', False)]
                     # Sort by start_time
                     league_games.sort(key=lambda x: x.get('start_time', datetime.max))
                     league_games = league_games[:self.max_games_per_league]
@@ -858,14 +880,16 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 logger.debug(f"Added {len(league_games)} games from {league_key}")
                 
             except Exception as e:
-                logger.error(f"Error fetching games for {league_key}: {e}")
+                logger.error(f"Error fetching games for {league_key}: {e}", exc_info=True)
         
-        logger.debug(f"Total games found: {len(games_data)}")
+        logger.info(f"Total games found: {len(games_data)}")
         if games_data:
             logger.debug(f"Sample game data keys: {list(games_data[0].keys())}")
+        elif self.enabled_leagues:
+            logger.warning(f"No games found for any of the {len(self.enabled_leagues)} enabled leagues")
         return games_data
 
-    def _fetch_league_games(self, league_config: Dict[str, Any], now: datetime) -> List[Dict[str, Any]]:
+    def _fetch_league_games(self, league_config: Dict[str, Any], now: datetime, canonical_league_key: str) -> List[Dict[str, Any]]:
         """Fetch upcoming games for a specific league using day-by-day approach."""
         games = []
         yesterday = now - timedelta(days=1)
@@ -1091,7 +1115,8 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                                     'odds': odds_data if has_odds else None,
                                     'broadcast_info': broadcast_info,
                                     'logo_dir': league_config.get('logo_dir', f'assets/sports/{league.lower()}_logos'),
-                                    'league': league_config.get('logo_league', league),  # Use logo_league for downloading
+                                    'league': canonical_league_key,  # Canonical lookup key (e.g., 'nfl', 'nba', 'soccer')
+                                    'logo_league': league_config.get('logo_league'),  # For logo downloads (can be None for soccer)
                                     'status': status,
                                     'status_state': status_state,
                                     'live_info': live_info
@@ -1221,26 +1246,20 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             
             # Determine sport for sport-specific formatting
             sport = None
-            for league_key, config in self.league_configs.items():
-                if config.get('logo_dir') == game.get('logo_dir'):
-                    sport = config.get('sport')
-                    break
+            league_key = game.get('league')
+            if league_key and league_key in self.league_configs:
+                sport = self.league_configs[league_key].get('sport')
             
-            # Get team names with rankings for NCAA football
+            # Get team names with rankings for NCAA football or basketball
             away_team_name = game.get('away_team_name', game['away_team'])
             home_team_name = game.get('home_team_name', game['home_team'])
             away_team_abbr = game.get('away_team', '')
             home_team_abbr = game.get('home_team', '')
             
-            # Check if this is NCAA football and add rankings
-            league_key = None
-            for key, config in self.league_configs.items():
-                if config.get('logo_dir') == game.get('logo_dir'):
-                    league_key = key
-                    break
-            
-            if league_key == 'ncaa_fb':
-                rankings = self._fetch_team_rankings()
+            # Check if this is NCAA football or basketball and add rankings
+            league_key = game.get('league')  # Use the league field from game dict
+            if league_key in ['ncaa_fb', 'ncaam_basketball']:
+                rankings = self._fetch_team_rankings(league_key)
                 
                 # Add ranking to away team name if ranked
                 if away_team_abbr in rankings and rankings[away_team_abbr] > 0:
@@ -1294,21 +1313,16 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             else:
                 time_str = "TBD"
             
-            # Get team names with rankings for NCAA football
+            # Get team names with rankings for NCAA football or basketball
             away_team_name = game.get('away_team_name', game['away_team'])
             home_team_name = game.get('home_team_name', game['home_team'])
             away_team_abbr = game.get('away_team', '')
             home_team_abbr = game.get('home_team', '')
             
-            # Check if this is NCAA football and add rankings
-            league_key = None
-            for key, config in self.league_configs.items():
-                if config.get('logo_dir') == game.get('logo_dir'):
-                    league_key = key
-                    break
-            
-            if league_key == 'ncaa_fb':
-                rankings = self._fetch_team_rankings()
+            # Check if this is NCAA football or basketball and add rankings
+            league_key = game.get('league')  # Use the league field from game dict
+            if league_key in ['ncaa_fb', 'ncaam_basketball']:
+                rankings = self._fetch_team_rankings(league_key)
                 
                 # Add ranking to away team name if ranked
                 if away_team_abbr in rankings and rankings[away_team_abbr] > 0:
@@ -1340,21 +1354,16 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         # Build odds string
         odds_parts = [f"[{time_str}]"]
         
-        # Get team names with rankings for NCAA football
+        # Get team names with rankings for NCAA football or basketball
         away_team_name = game.get('away_team_name', game['away_team'])
         home_team_name = game.get('home_team_name', game['home_team'])
         away_team_abbr = game.get('away_team', '')
         home_team_abbr = game.get('home_team', '')
         
-        # Check if this is NCAA football and add rankings
-        league_key = None
-        for key, config in self.league_configs.items():
-            if config.get('logo_dir') == game.get('logo_dir'):
-                league_key = key
-                break
-        
-        if league_key == 'ncaa_fb':
-            rankings = self._fetch_team_rankings()
+        # Check if this is NCAA football or basketball and add rankings
+        league_key = game.get('league')  # Use the league field from game dict
+        if league_key in ['ncaa_fb', 'ncaam_basketball']:
+            rankings = self._fetch_team_rankings(league_key)
             
             # Add ranking to away team name if ranked
             if away_team_abbr in rankings and rankings[away_team_abbr] > 0:
@@ -1452,8 +1461,10 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         datetime_font = self.datetime_font
 
         # Get team logos (with automatic download if missing)
-        home_logo = self._get_team_logo(game["league"], game['home_id'], game['home_team'], game['logo_dir'])
-        away_logo = self._get_team_logo(game["league"], game['away_id'], game['away_team'], game['logo_dir'])
+        # Use logo_league for downloads, fallback to canonical league if logo_league is None
+        logo_league = game.get('logo_league', game['league'])
+        home_logo = self._get_team_logo(logo_league, game['home_id'], game['home_team'], game['logo_dir'])
+        away_logo = self._get_team_logo(logo_league, game['away_id'], game['away_team'], game['logo_dir'])
         broadcast_logo = None
         
         # Enhanced broadcast logo debugging
@@ -1529,10 +1540,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         if is_live and live_info:
             # Show live game information instead of date/time
             sport = None
-            for league_key, config in self.league_configs.items():
-                if config.get('logo_dir') == game.get('logo_dir'):
-                    sport = config.get('sport')
-                    break
+            league_key = game.get('league')
+            if league_key and league_key in self.league_configs:
+                sport = self.league_configs[league_key].get('sport')
             
             if sport == 'baseball':
                 # For baseball, we'll use graphical base indicators instead of text
@@ -1635,16 +1645,10 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         away_team_abbr = game.get('away_team', '')
         home_team_abbr = game.get('home_team', '')
         
-        # Check if this is NCAA football and fetch rankings
-        league_key = None
-        for key, config in self.league_configs.items():
-            if config.get('logo_dir') == game.get('logo_dir'):
-                league_key = key
-                break
-        
-        # Add ranking prefix for NCAA football teams
-        if league_key == 'ncaa_fb':
-            rankings = self._fetch_team_rankings()
+        # Check if this is NCAA football or basketball and fetch rankings
+        league_key = game.get('league')  # Use the league field from game dict
+        if league_key in ['ncaa_fb', 'ncaam_basketball']:
+            rankings = self._fetch_team_rankings(league_key)
             
             # Add ranking to away team name if ranked
             if away_team_abbr in rankings and rankings[away_team_abbr] > 0:
@@ -1697,10 +1701,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         # For live games, show live status instead of odds
         if is_live and live_info:
             sport = None
-            for league_key, config in self.league_configs.items():
-                if config.get('logo_dir') == game.get('logo_dir'):
-                    sport = config.get('sport')
-                    break
+            league_key = game.get('league')
+            if league_key and league_key in self.league_configs:
+                sport = self.league_configs[league_key].get('sport')
             
             if sport == 'baseball':
                 # Show bases occupied for baseball
@@ -1762,10 +1765,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         is_baseball_live = False
         if is_live and live_info and hasattr(self, '_bases_data'):
             sport = None
-            for league_key, config in self.league_configs.items():
-                if config.get('logo_dir') == game.get('logo_dir'):
-                    sport = config.get('sport')
-                    break
+            league_key = game.get('league')
+            if league_key and league_key in self.league_configs:
+                sport = self.league_configs[league_key].get('sport')
             
             if sport == 'baseball':
                 is_baseball_live = True
@@ -2152,13 +2154,58 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self._perform_update()
 
     def _has_live_games(self) -> bool:
-        """Check if any games in the current games_data are live."""
-        if not self.games_data:
-            return False
-        return any(game.get('status_state') == 'in' for game in self.games_data)
+        """Check if any games are live or starting soon by checking both current games_data and cached scoreboard data."""
+        # First check current games_data for live games
+        if self.games_data:
+            # Check if any games are currently live
+            if any(game.get('status_state') == 'in' for game in self.games_data):
+                return True
+            
+            # Also check if any games are starting within the next few minutes
+            # This helps catch games that just went live
+            now = datetime.now(timezone.utc)
+            for game in self.games_data:
+                start_time = game.get('start_time')
+                if start_time and isinstance(start_time, datetime):
+                    # If game starts within the next 5 minutes, treat as "live" for update purposes
+                    time_until_start = (start_time - now).total_seconds()
+                    if -300 <= time_until_start <= 300:  # Within 5 minutes before or after start
+                        return True
+        
+        # Also check cached scoreboard data for today's games to catch live games
+        # that might not be in games_data yet
+        try:
+            now = datetime.now(timezone.utc)
+            today_str = now.strftime("%Y%m%d")
+            
+            for league_key, config in self.league_configs.items():
+                if league_key not in self.enabled_leagues:
+                    continue
+                
+                sport = config.get('sport')
+                league = config.get('league')
+                if not sport or not league:
+                    continue
+                
+                # Check cached scoreboard data for today
+                cache_key = f"scoreboard_data_{sport}_{league}_{today_str}"
+                cached_data = self.cache_manager.get(cache_key, max_age=300)  # 5 min max age
+                
+                if cached_data:
+                    events = cached_data.get('events', [])
+                    for event in events:
+                        status = event.get('status', {})
+                        status_type = status.get('type', {})
+                        if status_type.get('state') == 'in':
+                            # Found a live game in cached data
+                            return True
+        except Exception as e:
+            logger.debug(f"Error checking cached scoreboard for live games: {e}")
+        
+        return False
     
     def _get_current_update_interval(self) -> int:
-        """Get the current update interval based on whether there are live games."""
+        """Get the current update interval based on whether there are live games or games starting soon."""
         if self._has_live_games():
             return self.live_game_update_interval
         return self.base_update_interval
@@ -2173,13 +2220,22 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             return
         
         try:
+            # Reload config settings that can change at runtime
+            self.show_odds_only = self.odds_ticker_config.get('show_odds_only', False)
+            self.loop = self.odds_ticker_config.get('loop', True)
+            
             logger.debug("Updating odds ticker data")
             logger.debug(f"Enabled leagues: {self.enabled_leagues}")
             logger.debug(f"Show favorite teams only: {self.show_favorite_teams_only}")
+            logger.debug(f"Show odds only: {self.show_odds_only}")
+            logger.debug(f"Loop: {self.loop}")
             
             self.games_data = self._fetch_upcoming_games()
             self.last_update = current_time
-            self.scroll_helper.reset_scroll()
+            # Only reset scroll if looping is enabled, or if scroll hasn't completed yet
+            # This prevents resetting scroll when loop=False and scroll is already complete
+            if self.loop or not (hasattr(self, 'scroll_helper') and self.scroll_helper.is_scroll_complete()):
+                self.scroll_helper.reset_scroll()
             self.current_game_index = 0
             # Reset logging flags when updating data
             self._end_reached_logged = False
@@ -2199,6 +2255,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 
         except Exception as e:
             logger.error(f"Error updating odds ticker: {e}", exc_info=True)
+            logger.warning(f"Odds ticker update failed, games_data may be empty: {e}")
 
     def display(self, display_mode: str = None, force_clear: bool = False):
         """Display the odds ticker."""
