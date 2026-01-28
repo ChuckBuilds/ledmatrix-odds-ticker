@@ -387,10 +387,10 @@
               "items": {
                 "type": "string",
                 "enum": [
-                  "ANA", "ARI", "BOS", "BUF", "CAR", "CBJ", "CGY", "CHI",
-                  "COL", "DAL", "DET", "EDM", "FLA", "LAK", "MIN", "MTL",
-                  "NJ", "NSH", "NYI", "NYR", "OTT", "PHI", "PIT", "SJ",
-                  "STL", "TB", "TOR", "UTA", "VAN", "VGK", "WAS", "WPG"
+                  "ANA", "BOS", "BUF", "CAR", "CBJ", "CGY", "CHI", "COL",
+                  "DAL", "DET", "EDM", "FLA", "LAK", "MIN", "MTL", "NJ",
+                  "NSH", "NYI", "NYR", "OTT", "PHI", "PIT", "SJ", "STL",
+                  "TB", "TOR", "UTA", "VAN", "VGK", "WAS", "WPG"
                 ]
               },
               "uniqueItems": true,
@@ -398,7 +398,6 @@
               "x-options": {
                 "labels": {
                   "ANA": "Anaheim Ducks",
-                  "ARI": "Arizona Coyotes",
                   "BOS": "Boston Bruins",
                   "BUF": "Buffalo Sabres",
                   "CAR": "Carolina Hurricanes",
