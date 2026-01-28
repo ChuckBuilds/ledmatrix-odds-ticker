@@ -1766,8 +1766,15 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 
             elif sport == 'basketball':
                 # Basketball: Show score differential or just LIVE indicator
-                home_score = live_info.get('home_score', 0)
-                away_score = live_info.get('away_score', 0)
+                # Safely convert scores to int (API may return strings)
+                try:
+                    home_score = int(live_info.get('home_score', 0) or 0)
+                except (ValueError, TypeError):
+                    home_score = 0
+                try:
+                    away_score = int(live_info.get('away_score', 0) or 0)
+                except (ValueError, TypeError):
+                    away_score = 0
                 diff = home_score - away_score
                 if diff > 0:
                     away_odds_text = f"HOME +{diff}"
@@ -1776,12 +1783,19 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 else:
                     away_odds_text = "TIED"
                 home_odds_text = "LIVE"
-                
+
             elif sport == 'hockey':
                 # Hockey: Show power play status and score differential
                 power_play = live_info.get('power_play', False)
-                home_score = live_info.get('home_score', 0)
-                away_score = live_info.get('away_score', 0)
+                # Safely convert scores to int (API may return strings)
+                try:
+                    home_score = int(live_info.get('home_score', 0) or 0)
+                except (ValueError, TypeError):
+                    home_score = 0
+                try:
+                    away_score = int(live_info.get('away_score', 0) or 0)
+                except (ValueError, TypeError):
+                    away_score = 0
                 diff = home_score - away_score
                 if diff > 0:
                     score_text = f"HOME +{diff}"
