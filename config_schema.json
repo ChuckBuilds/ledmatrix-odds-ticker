@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Odds Ticker Plugin Configuration",
-  "description": "Configuration schema for the Odds Ticker plugin",
+  "description": "Configuration schema for the Odds Ticker plugin - displays betting odds for NFL, NBA, MLB, NHL, MiLB, and NCAA sports",
   "type": "object",
   "properties": {
     "enabled": {
@@ -9,103 +9,45 @@
       "default": false,
       "description": "Enable or disable the odds ticker plugin"
     },
-    "display_duration": {
-      "type": "number",
-      "default": 30,
-      "minimum": 10,
-      "maximum": 300,
-      "description": "Duration in seconds to display the odds ticker (used when dynamic_duration is disabled)"
-    },
-    "show_favorite_teams_only": {
-      "type": "boolean",
-      "default": false,
-      "description": "Only show odds for favorite teams"
-    },
-    "games_per_favorite_team": {
-      "type": "integer",
-      "default": 1,
-      "minimum": 1,
-      "maximum": 5,
-      "description": "Number of games to show per favorite team"
-    },
-    "max_games_per_league": {
-      "type": "integer",
-      "default": 5,
-      "minimum": 1,
-      "maximum": 20,
-      "description": "Maximum number of games to show per league"
-    },
-    "show_odds_only": {
-      "type": "boolean",
-      "default": false,
-      "description": "Show only odds, no game details"
-    },
-    "sort_order": {
-      "type": "string",
-      "enum": [
-        "soonest",
-        "league",
-        "team"
-      ],
-      "default": "soonest",
-      "description": "Sort order for displaying games"
-    },
-    "enabled_leagues": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "enum": [
-          "nfl",
-          "nba",
-          "mlb",
-          "ncaa_fb",
-          "ncaam_basketball",
-          "nhl"
-        ],
-        "description": "League identifier"
-      },
-      "uniqueItems": true,
-      "default": [
-        "nfl"
-      ],
-      "x-widget": "checkbox-group",
-      "x-options": {
-        "labels": {
-          "nfl": "NFL",
-          "nba": "NBA",
-          "mlb": "MLB",
-          "ncaa_fb": "NCAA Football",
-          "ncaam_basketball": "NCAA Men's Basketball",
-          "nhl": "NHL"
-        }
-      },
-      "description": "Select which leagues to display odds for"
-    },
-    "update_interval": {
-      "type": "integer",
-      "default": 3600,
-      "minimum": 300,
-      "maximum": 86400,
-      "description": "How often to fetch new odds data in seconds when there are no live games"
-    },
-    "live_game_update_interval": {
-      "type": "integer",
-      "default": 60,
-      "minimum": 30,
-      "maximum": 300,
-      "description": "How often to fetch new odds data in seconds when there are live games being displayed. This allows more frequent updates for live game scores and time remaining while using the normal update_interval for upcoming/finished games."
-    },
-    "scroll_pixels_per_second": {
-      "type": "number",
-      "default": 15.0,
-      "minimum": 5.0,
-      "maximum": 50.0,
-      "description": "[Deprecated] Scroll speed in pixels per second. Use display.scroll_speed and display.scroll_delay for finer control. Lower values = slower scrolling. Recommended: 10-15 for comfortable reading"
-    },
-    "display": {
+    "display_options": {
       "type": "object",
-      "description": "Display and scrolling settings",
+      "title": "Display Options",
+      "description": "Configure display duration, scrolling speed, and visual settings",
+      "x-collapsed": true,
       "properties": {
+        "display_duration": {
+          "type": "number",
+          "default": 30,
+          "minimum": 10,
+          "maximum": 300,
+          "description": "Duration in seconds to display the odds ticker (used when dynamic_duration is disabled)"
+        },
+        "dynamic_duration": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable dynamic duration based on content width. Automatically adjusts display time based on how much content there is"
+        },
+        "min_duration": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 10,
+          "maximum": 300,
+          "description": "Minimum display duration in seconds when dynamic duration is enabled"
+        },
+        "max_duration": {
+          "type": "integer",
+          "default": 300,
+          "minimum": 30,
+          "maximum": 600,
+          "description": "Maximum display duration in seconds when dynamic duration is enabled"
+        },
+        "duration_buffer": {
+          "type": "number",
+          "default": 0.1,
+          "minimum": 0.01,
+          "maximum": 1.0,
+          "description": "Extra buffer time added to calculated duration (as percentage, 0.1 = 10%)"
+        },
         "scroll_speed": {
           "type": "number",
           "description": "Scrolling speed in pixels per frame",
@@ -115,81 +57,129 @@
         },
         "scroll_delay": {
           "type": "number",
-          "description": "Delay between scroll steps in seconds",
+          "description": "Delay between scroll steps in seconds (lower = faster scrolling)",
           "minimum": 0.001,
           "maximum": 0.1,
           "default": 0.02
+        },
+        "scroll_pixels_per_second": {
+          "type": "number",
+          "default": 50.0,
+          "minimum": 5.0,
+          "maximum": 100.0,
+          "description": "Scroll speed in pixels per second (used for dynamic duration calculation). Set to match your actual scroll rate: scroll_speed / scroll_delay"
+        },
+        "target_fps": {
+          "type": "integer",
+          "default": 120,
+          "minimum": 30,
+          "maximum": 200,
+          "description": "Target frames per second for smooth scrolling. Higher values = smoother animation (120 recommended)"
+        },
+        "loop": {
+          "type": "boolean",
+          "default": true,
+          "description": "Continuously loop the ticker. If false, stops at the end"
+        },
+        "show_channel_logos": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show broadcast channel logos"
         }
       },
       "additionalProperties": false
     },
-    "target_fps": {
-      "type": "integer",
-      "default": 120,
-      "minimum": 30,
-      "maximum": 200,
-      "description": "Target frames per second for smooth scrolling. Higher values = smoother animation (120 recommended)"
+    "data_settings": {
+      "type": "object",
+      "title": "Data Settings",
+      "description": "Configure data fetch intervals and API settings",
+      "x-collapsed": true,
+      "properties": {
+        "update_interval": {
+          "type": "integer",
+          "default": 3600,
+          "minimum": 300,
+          "maximum": 86400,
+          "description": "How often to fetch new odds data in seconds when there are no live games"
+        },
+        "live_game_update_interval": {
+          "type": "integer",
+          "default": 60,
+          "minimum": 30,
+          "maximum": 300,
+          "description": "How often to fetch new odds data in seconds when there are live games being displayed"
+        },
+        "future_fetch_days": {
+          "type": "integer",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 90,
+          "description": "Days ahead to fetch upcoming games"
+        },
+        "request_timeout": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 5,
+          "maximum": 120,
+          "description": "Request timeout in seconds for API calls"
+        },
+        "fetch_odds": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable fetching of betting odds"
+        }
+      },
+      "additionalProperties": false
     },
-    "loop": {
-      "type": "boolean",
-      "default": true,
-      "description": "Continuously loop the ticker. If false, stops at the end"
-    },
-    "future_fetch_days": {
-      "type": "integer",
-      "default": 7,
-      "minimum": 1,
-      "maximum": 90,
-      "description": "Days ahead to fetch upcoming games"
-    },
-    "show_channel_logos": {
-      "type": "boolean",
-      "default": true,
-      "description": "Show broadcast channel logos"
-    },
-    "dynamic_duration": {
-      "type": "boolean",
-      "default": true,
-      "description": "Enable dynamic duration based on content width. Automatically adjusts display time based on how much content there is"
-    },
-    "min_duration": {
-      "type": "integer",
-      "default": 30,
-      "minimum": 10,
-      "maximum": 300,
-      "description": "Minimum display duration in seconds when dynamic duration is enabled"
-    },
-    "max_duration": {
-      "type": "integer",
-      "default": 300,
-      "minimum": 30,
-      "maximum": 600,
-      "description": "Maximum display duration in seconds when dynamic duration is enabled"
-    },
-    "duration_buffer": {
-      "type": "number",
-      "default": 0.1,
-      "minimum": 0.01,
-      "maximum": 1.0,
-      "description": "Extra buffer time added to calculated duration (as percentage, 0.1 = 10%)"
-    },
-    "request_timeout": {
-      "type": "integer",
-      "default": 30,
-      "minimum": 5,
-      "maximum": 120,
-      "description": "Request timeout in seconds for API calls"
-    },
-    "fetch_odds": {
-      "type": "boolean",
-      "default": true,
-      "description": "Enable fetching of betting odds"
+    "filtering": {
+      "type": "object",
+      "title": "Filtering Options",
+      "description": "Control which games and teams are displayed",
+      "x-collapsed": true,
+      "properties": {
+        "show_favorite_teams_only": {
+          "type": "boolean",
+          "default": false,
+          "description": "Only show odds for favorite teams across all leagues"
+        },
+        "games_per_favorite_team": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Number of games to show per favorite team"
+        },
+        "max_games_per_league": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum number of games to show per league"
+        },
+        "show_odds_only": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include only games that have odds data; games without odds will be excluded from the ticker"
+        },
+        "sort_order": {
+          "type": "string",
+          "enum": ["soonest", "league", "team"],
+          "default": "soonest",
+          "description": "Sort order for displaying games"
+        }
+      },
+      "additionalProperties": false
     },
     "leagues": {
       "type": "object",
+      "title": "Sports Leagues",
+      "description": "Enable and configure individual sports leagues",
       "properties": {
         "nfl": {
           "type": "object",
+          "title": "NFL (National Football League)",
+          "description": "Configure NFL odds display",
+          "x-collapsed": true,
           "properties": {
             "enabled": {
               "type": "boolean",
@@ -198,20 +188,64 @@
             },
             "favorite_teams": {
               "type": "array",
+              "title": "Favorite Teams",
+              "description": "Select your favorite NFL teams",
               "items": {
                 "type": "string",
-                "pattern": "^[A-Z]{2,3}$",
-                "description": "NFL team abbreviation"
+                "enum": [
+                  "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE",
+                  "DAL", "DEN", "DET", "GB", "HOU", "IND", "JAX", "KC",
+                  "LA", "LAC", "LV", "MIA", "MIN", "NE", "NO", "NYG",
+                  "NYJ", "PHI", "PIT", "SEA", "SF", "TB", "TEN", "WSH"
+                ]
               },
               "uniqueItems": true,
-              "maxItems": 32,
-              "description": "Favorite NFL teams for odds display"
+              "x-widget": "checkbox-group",
+              "x-options": {
+                "labels": {
+                  "ARI": "Arizona Cardinals",
+                  "ATL": "Atlanta Falcons",
+                  "BAL": "Baltimore Ravens",
+                  "BUF": "Buffalo Bills",
+                  "CAR": "Carolina Panthers",
+                  "CHI": "Chicago Bears",
+                  "CIN": "Cincinnati Bengals",
+                  "CLE": "Cleveland Browns",
+                  "DAL": "Dallas Cowboys",
+                  "DEN": "Denver Broncos",
+                  "DET": "Detroit Lions",
+                  "GB": "Green Bay Packers",
+                  "HOU": "Houston Texans",
+                  "IND": "Indianapolis Colts",
+                  "JAX": "Jacksonville Jaguars",
+                  "KC": "Kansas City Chiefs",
+                  "LA": "Los Angeles Rams",
+                  "LAC": "Los Angeles Chargers",
+                  "LV": "Las Vegas Raiders",
+                  "MIA": "Miami Dolphins",
+                  "MIN": "Minnesota Vikings",
+                  "NE": "New England Patriots",
+                  "NO": "New Orleans Saints",
+                  "NYG": "New York Giants",
+                  "NYJ": "New York Jets",
+                  "PHI": "Philadelphia Eagles",
+                  "PIT": "Pittsburgh Steelers",
+                  "SEA": "Seattle Seahawks",
+                  "SF": "San Francisco 49ers",
+                  "TB": "Tampa Bay Buccaneers",
+                  "TEN": "Tennessee Titans",
+                  "WSH": "Washington Commanders"
+                }
+              }
             }
           },
           "additionalProperties": false
         },
         "nba": {
           "type": "object",
+          "title": "NBA (National Basketball Association)",
+          "description": "Configure NBA odds display",
+          "x-collapsed": true,
           "properties": {
             "enabled": {
               "type": "boolean",
@@ -220,20 +254,62 @@
             },
             "favorite_teams": {
               "type": "array",
+              "title": "Favorite Teams",
+              "description": "Select your favorite NBA teams",
               "items": {
                 "type": "string",
-                "pattern": "^[A-Z]{2,3}$",
-                "description": "NBA team abbreviation"
+                "enum": [
+                  "ATL", "BKN", "BOS", "CHA", "CHI", "CLE", "DAL", "DEN",
+                  "DET", "GSW", "HOU", "IND", "LAC", "LAL", "MEM", "MIA",
+                  "MIL", "MIN", "NOP", "NYK", "OKC", "ORL", "PHI", "PHX",
+                  "POR", "SAC", "SAS", "TOR", "UTA", "WAS"
+                ]
               },
               "uniqueItems": true,
-              "maxItems": 30,
-              "description": "Favorite NBA teams for odds display"
+              "x-widget": "checkbox-group",
+              "x-options": {
+                "labels": {
+                  "ATL": "Atlanta Hawks",
+                  "BKN": "Brooklyn Nets",
+                  "BOS": "Boston Celtics",
+                  "CHA": "Charlotte Hornets",
+                  "CHI": "Chicago Bulls",
+                  "CLE": "Cleveland Cavaliers",
+                  "DAL": "Dallas Mavericks",
+                  "DEN": "Denver Nuggets",
+                  "DET": "Detroit Pistons",
+                  "GSW": "Golden State Warriors",
+                  "HOU": "Houston Rockets",
+                  "IND": "Indiana Pacers",
+                  "LAC": "Los Angeles Clippers",
+                  "LAL": "Los Angeles Lakers",
+                  "MEM": "Memphis Grizzlies",
+                  "MIA": "Miami Heat",
+                  "MIL": "Milwaukee Bucks",
+                  "MIN": "Minnesota Timberwolves",
+                  "NOP": "New Orleans Pelicans",
+                  "NYK": "New York Knicks",
+                  "OKC": "Oklahoma City Thunder",
+                  "ORL": "Orlando Magic",
+                  "PHI": "Philadelphia 76ers",
+                  "PHX": "Phoenix Suns",
+                  "POR": "Portland Trail Blazers",
+                  "SAC": "Sacramento Kings",
+                  "SAS": "San Antonio Spurs",
+                  "TOR": "Toronto Raptors",
+                  "UTA": "Utah Jazz",
+                  "WAS": "Washington Wizards"
+                }
+              }
             }
           },
           "additionalProperties": false
         },
         "mlb": {
           "type": "object",
+          "title": "MLB (Major League Baseball)",
+          "description": "Configure MLB odds display",
+          "x-collapsed": true,
           "properties": {
             "enabled": {
               "type": "boolean",
@@ -242,58 +318,218 @@
             },
             "favorite_teams": {
               "type": "array",
+              "title": "Favorite Teams",
+              "description": "Select your favorite MLB teams",
               "items": {
                 "type": "string",
-                "pattern": "^[A-Z]{2,3}$",
-                "description": "MLB team abbreviation"
+                "enum": [
+                  "ARI", "ATL", "BAL", "BOS", "CHC", "CIN", "CLE", "COL",
+                  "CWS", "DET", "HOU", "KC", "LAA", "LAD", "MIA", "MIL",
+                  "MIN", "NYM", "NYY", "OAK", "PHI", "PIT", "SD", "SEA",
+                  "SF", "STL", "TB", "TEX", "TOR", "WSH"
+                ]
               },
               "uniqueItems": true,
-              "maxItems": 30,
-              "description": "Favorite MLB teams for odds display"
+              "x-widget": "checkbox-group",
+              "x-options": {
+                "labels": {
+                  "ARI": "Arizona Diamondbacks",
+                  "ATL": "Atlanta Braves",
+                  "BAL": "Baltimore Orioles",
+                  "BOS": "Boston Red Sox",
+                  "CHC": "Chicago Cubs",
+                  "CIN": "Cincinnati Reds",
+                  "CLE": "Cleveland Guardians",
+                  "COL": "Colorado Rockies",
+                  "CWS": "Chicago White Sox",
+                  "DET": "Detroit Tigers",
+                  "HOU": "Houston Astros",
+                  "KC": "Kansas City Royals",
+                  "LAA": "Los Angeles Angels",
+                  "LAD": "Los Angeles Dodgers",
+                  "MIA": "Miami Marlins",
+                  "MIL": "Milwaukee Brewers",
+                  "MIN": "Minnesota Twins",
+                  "NYM": "New York Mets",
+                  "NYY": "New York Yankees",
+                  "OAK": "Oakland Athletics",
+                  "PHI": "Philadelphia Phillies",
+                  "PIT": "Pittsburgh Pirates",
+                  "SD": "San Diego Padres",
+                  "SEA": "Seattle Mariners",
+                  "SF": "San Francisco Giants",
+                  "STL": "St. Louis Cardinals",
+                  "TB": "Tampa Bay Rays",
+                  "TEX": "Texas Rangers",
+                  "TOR": "Toronto Blue Jays",
+                  "WSH": "Washington Nationals"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "nhl": {
+          "type": "object",
+          "title": "NHL (National Hockey League)",
+          "description": "Configure NHL odds display",
+          "x-collapsed": true,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable NHL odds"
+            },
+            "favorite_teams": {
+              "type": "array",
+              "title": "Favorite Teams",
+              "description": "Select your favorite NHL teams",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "ANA", "BOS", "BUF", "CAR", "CBJ", "CGY", "CHI", "COL",
+                  "DAL", "DET", "EDM", "FLA", "LAK", "MIN", "MTL", "NJ",
+                  "NSH", "NYI", "NYR", "OTT", "PHI", "PIT", "SJ", "STL",
+                  "TB", "TOR", "UTA", "VAN", "VGK", "WAS", "WPG"
+                ]
+              },
+              "uniqueItems": true,
+              "x-widget": "checkbox-group",
+              "x-options": {
+                "labels": {
+                  "ANA": "Anaheim Ducks",
+                  "BOS": "Boston Bruins",
+                  "BUF": "Buffalo Sabres",
+                  "CAR": "Carolina Hurricanes",
+                  "CBJ": "Columbus Blue Jackets",
+                  "CGY": "Calgary Flames",
+                  "CHI": "Chicago Blackhawks",
+                  "COL": "Colorado Avalanche",
+                  "DAL": "Dallas Stars",
+                  "DET": "Detroit Red Wings",
+                  "EDM": "Edmonton Oilers",
+                  "FLA": "Florida Panthers",
+                  "LAK": "Los Angeles Kings",
+                  "MIN": "Minnesota Wild",
+                  "MTL": "Montreal Canadiens",
+                  "NJ": "New Jersey Devils",
+                  "NSH": "Nashville Predators",
+                  "NYI": "New York Islanders",
+                  "NYR": "New York Rangers",
+                  "OTT": "Ottawa Senators",
+                  "PHI": "Philadelphia Flyers",
+                  "PIT": "Pittsburgh Penguins",
+                  "SJ": "San Jose Sharks",
+                  "STL": "St. Louis Blues",
+                  "TB": "Tampa Bay Lightning",
+                  "TOR": "Toronto Maple Leafs",
+                  "UTA": "Utah Hockey Club",
+                  "VAN": "Vancouver Canucks",
+                  "VGK": "Vegas Golden Knights",
+                  "WAS": "Washington Capitals",
+                  "WPG": "Winnipeg Jets"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "milb": {
+          "type": "object",
+          "title": "MiLB (Minor League Baseball)",
+          "description": "Configure MiLB odds display",
+          "x-collapsed": true,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable MiLB odds"
+            },
+            "favorite_teams": {
+              "type": "array",
+              "title": "Favorite Teams",
+              "description": "Enter MiLB team abbreviations (e.g., DUR, SWB, NOR). Due to the large number of minor league teams, enter abbreviations manually.",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Z]{2,4}$"
+              },
+              "uniqueItems": true,
+              "maxItems": 120
             }
           },
           "additionalProperties": false
         },
         "ncaa_fb": {
           "type": "object",
+          "title": "NCAA Football",
+          "description": "Configure NCAA Football odds display",
+          "x-collapsed": true,
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true,
+              "default": false,
               "description": "Enable NCAA Football odds"
             },
             "favorite_teams": {
               "type": "array",
+              "title": "Favorite Teams",
+              "description": "Enter NCAA Football team abbreviations (e.g., UGA, AUB, BAMA, OSU). Use AP_TOP_25 to automatically include all AP Top 25 ranked teams.",
               "items": {
                 "type": "string",
-                "pattern": "^[A-Z]{2,4}$",
-                "description": "NCAA FB team abbreviation"
+                "pattern": "^[A-Z0-9_]{2,10}$"
               },
               "uniqueItems": true,
-              "maxItems": 130,
-              "description": "Favorite NCAA FB teams for odds display"
+              "maxItems": 130
             }
           },
           "additionalProperties": false
         },
         "ncaam_basketball": {
           "type": "object",
+          "title": "NCAA Men's Basketball",
+          "description": "Configure NCAA Men's Basketball odds display",
+          "x-collapsed": true,
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true,
+              "default": false,
               "description": "Enable NCAA Men's Basketball odds"
             },
             "favorite_teams": {
               "type": "array",
+              "title": "Favorite Teams",
+              "description": "Enter NCAA Men's Basketball team abbreviations (e.g., DUKE, UNC, UK, KANSAS). Use AP_TOP_25 to automatically include all AP Top 25 ranked teams.",
               "items": {
                 "type": "string",
-                "pattern": "^[A-Z]{2,4}$",
-                "description": "NCAA MB team abbreviation"
+                "pattern": "^[A-Z0-9_]{2,10}$"
               },
               "uniqueItems": true,
-              "maxItems": 350,
-              "description": "Favorite NCAA MB teams for odds display"
+              "maxItems": 350
+            }
+          },
+          "additionalProperties": false
+        },
+        "ncaa_baseball": {
+          "type": "object",
+          "title": "NCAA Baseball",
+          "description": "Configure NCAA Baseball odds display",
+          "x-collapsed": true,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable NCAA Baseball odds"
+            },
+            "favorite_teams": {
+              "type": "array",
+              "title": "Favorite Teams",
+              "description": "Enter NCAA Baseball team abbreviations (e.g., LSU, FLA, VAN, TEX).",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Z]{2,4}$"
+              },
+              "uniqueItems": true,
+              "maxItems": 300
             }
           },
           "additionalProperties": false
@@ -305,6 +541,7 @@
       "type": "object",
       "title": "Display Customization",
       "description": "Customize fonts for odds ticker display elements",
+      "x-collapsed": true,
       "properties": {
         "team_text": {
           "type": "object",
@@ -334,10 +571,7 @@
               "default": 8
             }
           },
-          "x-propertyOrder": [
-            "font",
-            "font_size"
-          ],
+          "x-propertyOrder": ["font", "font_size"],
           "additionalProperties": false
         },
         "odds_text": {
@@ -368,10 +602,7 @@
               "default": 8
             }
           },
-          "x-propertyOrder": [
-            "font",
-            "font_size"
-          ],
+          "x-propertyOrder": ["font", "font_size"],
           "additionalProperties": false
         },
         "datetime_text": {
@@ -402,23 +633,22 @@
               "default": 8
             }
           },
-          "x-propertyOrder": [
-            "font",
-            "font_size"
-          ],
+          "x-propertyOrder": ["font", "font_size"],
           "additionalProperties": false
         }
       },
-      "x-propertyOrder": [
-        "team_text",
-        "odds_text",
-        "datetime_text"
-      ],
+      "x-propertyOrder": ["team_text", "odds_text", "datetime_text"],
       "additionalProperties": false
     }
   },
   "additionalProperties": false,
-  "required": [
-    "enabled"
+  "required": ["enabled"],
+  "x-propertyOrder": [
+    "enabled",
+    "display_options",
+    "data_settings",
+    "filtering",
+    "leagues",
+    "customization"
   ]
 }

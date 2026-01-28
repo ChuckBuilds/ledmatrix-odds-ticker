@@ -173,31 +173,70 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         # The config parameter already contains the odds-ticker configuration directly
         self.odds_ticker_config = config
         self.is_enabled = self.odds_ticker_config.get('enabled', False)
-        
+
         # Debug logging
         self.logger.info(f"Full config received: {config}")
         self.logger.info(f"Odds ticker configuration: {self.odds_ticker_config}")
         self.logger.info(f"Odds ticker enabled: {self.is_enabled}")
-        self.show_favorite_teams_only = self.odds_ticker_config.get('show_favorite_teams_only', False)
-        self.games_per_favorite_team = self.odds_ticker_config.get('games_per_favorite_team', 1)
-        self.max_games_per_league = self.odds_ticker_config.get('max_games_per_league', 5)
-        self.show_odds_only = self.odds_ticker_config.get('show_odds_only', False)
-        self.fetch_odds = self.odds_ticker_config.get('fetch_odds', True)
-        self.sort_order = self.odds_ticker_config.get('sort_order', 'soonest')
-        self.enabled_leagues = self.odds_ticker_config.get('enabled_leagues', ['nfl', 'nba', 'mlb'])
-        self.update_interval = self.odds_ticker_config.get('update_interval', 3600)
-        self.live_game_update_interval = self.odds_ticker_config.get('live_game_update_interval', 60)
+
+        # Get nested config sections (support both old flat and new nested structure)
+        display_options = self.odds_ticker_config.get('display_options', {})
+        data_settings = self.odds_ticker_config.get('data_settings', {})
+        filtering = self.odds_ticker_config.get('filtering', {})
+        leagues_config = self.odds_ticker_config.get('leagues', {})
+
+        # Use instance method for config value retrieval
+        def get_config(section, key, default, old_key=None):
+            return self._get_config_value(section, key, default, self.odds_ticker_config, old_key)
+
+        # Filtering settings
+        self.show_favorite_teams_only = get_config(filtering, 'show_favorite_teams_only', False)
+        self.games_per_favorite_team = get_config(filtering, 'games_per_favorite_team', 1)
+        self.max_games_per_league = get_config(filtering, 'max_games_per_league', 5)
+        self.show_odds_only = get_config(filtering, 'show_odds_only', False)
+        self.sort_order = get_config(filtering, 'sort_order', 'soonest')
+
+        # Data settings
+        self.fetch_odds = get_config(data_settings, 'fetch_odds', True)
+        self.update_interval = get_config(data_settings, 'update_interval', 3600)
+        self.live_game_update_interval = get_config(data_settings, 'live_game_update_interval', 60)
+        self.future_fetch_days = get_config(data_settings, 'future_fetch_days', 7)
+        self.request_timeout = get_config(data_settings, 'request_timeout', 30)
         self.base_update_interval = self.update_interval  # Store base interval for switching
-        # Scroll speed configuration - prefer display object (granular control), fallback to scroll_pixels_per_second for backward compatibility
+
+        # Build enabled_leagues from individual league enabled flags (new structure) or from enabled_leagues array (old structure)
+        if leagues_config:
+            self.enabled_leagues = [
+                league_key for league_key in ['nfl', 'nba', 'mlb', 'nhl', 'milb', 'ncaa_fb', 'ncaam_basketball', 'ncaa_baseball']
+                if leagues_config.get(league_key, {}).get('enabled', False)
+            ]
+        else:
+            self.enabled_leagues = self.odds_ticker_config.get('enabled_leagues', ['nfl', 'nba', 'mlb'])
+
+        # Display options
+        self.display_duration = get_config(display_options, 'display_duration', 30)
+        self.target_fps = get_config(display_options, 'target_fps', 120)
+        self.loop = get_config(display_options, 'loop', True)
+        self.show_channel_logos = get_config(display_options, 'show_channel_logos', True)
+        self.broadcast_logo_height_ratio = self.odds_ticker_config.get('broadcast_logo_height_ratio', 0.8)
+        self.broadcast_logo_max_width_ratio = self.odds_ticker_config.get('broadcast_logo_max_width_ratio', 0.8)
+
+        # Scroll speed configuration - prefer display_options (new structure), then display object, fallback to scroll_pixels_per_second
         display_config = self.odds_ticker_config.get('display', {})
-        if display_config and ('scroll_speed' in display_config or 'scroll_delay' in display_config):
-            # New format: use display object for granular control
+        if display_options and ('scroll_speed' in display_options or 'scroll_delay' in display_options):
+            # Newest format: use display_options object for granular control
+            self.scroll_speed = display_options.get('scroll_speed', 1.0)
+            self.scroll_delay = display_options.get('scroll_delay', 0.02)
+            self.scroll_pixels_per_second = display_options.get('scroll_pixels_per_second')
+            self.logger.info(f"Using display_options.scroll_speed={self.scroll_speed} px/frame, display_options.scroll_delay={self.scroll_delay}s (frame-based mode)")
+        elif display_config and ('scroll_speed' in display_config or 'scroll_delay' in display_config):
+            # Old nested format: use display object for granular control
             self.scroll_speed = display_config.get('scroll_speed', 1.0)
             self.scroll_delay = display_config.get('scroll_delay', 0.02)
             self.scroll_pixels_per_second = None  # Not using pixels per second mode
             self.logger.info(f"Using display.scroll_speed={self.scroll_speed} px/frame, display.scroll_delay={self.scroll_delay}s (frame-based mode)")
         else:
-            # Old format: use scroll_pixels_per_second (backward compatibility)
+            # Legacy flat format: use scroll_pixels_per_second (backward compatibility)
             self.scroll_pixels_per_second = self.odds_ticker_config.get('scroll_pixels_per_second')
             self.scroll_speed = self.odds_ticker_config.get('scroll_speed', 2)
             self.scroll_delay = self.odds_ticker_config.get('scroll_delay', 0.05)
@@ -206,21 +245,12 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             else:
                 # Calculate from legacy scroll_speed/scroll_delay
                 self.logger.info(f"Using legacy scroll_speed={self.scroll_speed}, scroll_delay={self.scroll_delay} (backward compatibility)")
-        self.display_duration = self.odds_ticker_config.get('display_duration', 30)
-        # Get target FPS from config (support both target_fps and scroll_target_fps for compatibility)
-        self.target_fps = self.odds_ticker_config.get('target_fps') or self.odds_ticker_config.get('scroll_target_fps', 120)
-        self.future_fetch_days = self.odds_ticker_config.get('future_fetch_days', 7)
-        self.loop = self.odds_ticker_config.get('loop', True)
-        self.show_channel_logos = self.odds_ticker_config.get('show_channel_logos', True)
-        self.broadcast_logo_height_ratio = self.odds_ticker_config.get('broadcast_logo_height_ratio', 0.8)
-        self.broadcast_logo_max_width_ratio = self.odds_ticker_config.get('broadcast_logo_max_width_ratio', 0.8)
-        self.request_timeout = self.odds_ticker_config.get('request_timeout', 30)
-        
+
         # Dynamic duration settings
-        self.dynamic_duration_enabled = self.odds_ticker_config.get('dynamic_duration', True)
-        self.min_duration = self.odds_ticker_config.get('min_duration', 30)
-        self.max_duration = self.odds_ticker_config.get('max_duration', 300)
-        self.duration_buffer = self.odds_ticker_config.get('duration_buffer', 0.1)
+        self.dynamic_duration_enabled = get_config(display_options, 'dynamic_duration', True)
+        self.min_duration = get_config(display_options, 'min_duration', 30)
+        self.max_duration = get_config(display_options, 'max_duration', 300)
+        self.duration_buffer = get_config(display_options, 'duration_buffer', 0.1)
         self.dynamic_duration = 60  # Default duration in seconds
         self.total_scroll_width = 0  # Track total width for dynamic duration calculation
         
@@ -448,16 +478,47 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                     # Resolve dynamic teams for this league
                     resolved_teams = self.dynamic_resolver.resolve_teams(raw_favorite_teams, league_key)
                     league_config['favorite_teams'] = resolved_teams
-                    
+
                     # Log dynamic team resolution
                     if raw_favorite_teams != resolved_teams:
                         logger.info(f"Resolved dynamic teams for {league_key}: {raw_favorite_teams} -> {resolved_teams}")
                     else:
                         logger.info(f"Favorite teams for {league_key}: {resolved_teams}")
-        
+
+        # Recompute enabled_leagues from resolved league_configs (includes fallback-enabled leagues)
+        self.enabled_leagues = [
+            league_key for league_key, league_cfg in self.league_configs.items()
+            if league_cfg.get('enabled', False)
+        ]
+
         logger.info(f"OddsTickerManager initialized with enabled leagues: {self.enabled_leagues}")
         logger.info(f"Show favorite teams only: {self.show_favorite_teams_only}")
         self.initialized = True
+
+    def _get_config_value(self, section: Dict, key: str, default: Any,
+                          config_dict: Dict[str, Any], old_key: str = None) -> Any:
+        """Get config value from new nested structure or fall back to old flat structure.
+
+        Args:
+            section: The nested config section (e.g., display_options, filtering)
+            key: The key to look up in the section
+            default: Default value if key not found
+            config_dict: The full config dict for flat structure fallback
+            old_key: Optional alternative key name for backward compatibility
+
+        Returns:
+            The config value from section, config_dict, or default
+        """
+        if section:
+            value = section.get(key, config_dict.get(key, default))
+        else:
+            value = config_dict.get(key, default)
+
+        # Try old_key if value is still default and old_key is specified
+        if value == default and old_key:
+            value = config_dict.get(old_key, default)
+
+        return value
 
     def _load_custom_font_from_element_config(self, element_config: Dict[str, Any], default_size: int = 8, default_font_name: str = 'PressStart2P-Regular.ttf') -> ImageFont.FreeTypeFont:
         """
@@ -1581,14 +1642,13 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 time_text = clock_text
                 
             elif sport == 'basketball':
-                # Basketball: Show quarter and time remaining
+                # Basketball: Show quarter, time remaining, and LIVE indicator
                 quarter_text = f"Q{live_info.get('quarter', 1)}"
                 clock_text = live_info.get('time_remaining', '')
-                possession_text = live_info.get('possession', '')
-                
+
                 day_text = quarter_text
                 date_text = clock_text
-                time_text = possession_text
+                time_text = "LIVE"  # Clear indicator instead of empty possession
                 
             elif sport == 'hockey':
                 # Hockey: Show period and time remaining
@@ -1726,18 +1786,47 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 home_odds_text = f"Yard: {yard_line}"
                 
             elif sport == 'basketball':
-                # Show possession for basketball
-                possession = live_info.get('possession', '')
-                
-                away_odds_text = f"Ball: {possession}"
-                home_odds_text = f"Time: {live_info.get('time_remaining', '')}"
-                
+                # Basketball: Show score differential or just LIVE indicator
+                # Safely convert scores to int (API may return strings)
+                try:
+                    home_score = int(live_info.get('home_score', 0) or 0)
+                except (ValueError, TypeError):
+                    home_score = 0
+                try:
+                    away_score = int(live_info.get('away_score', 0) or 0)
+                except (ValueError, TypeError):
+                    away_score = 0
+                diff = home_score - away_score
+                if diff > 0:
+                    away_odds_text = f"HOME +{diff}"
+                elif diff < 0:
+                    away_odds_text = f"AWAY +{abs(diff)}"
+                else:
+                    away_odds_text = "TIED"
+                home_odds_text = "LIVE"
+
             elif sport == 'hockey':
-                # Show power play status for hockey
+                # Hockey: Show power play status and score differential
                 power_play = live_info.get('power_play', False)
-                
-                away_odds_text = "Power Play" if power_play else "Even"
-                home_odds_text = f"Time: {live_info.get('time_remaining', '')}"
+                # Safely convert scores to int (API may return strings)
+                try:
+                    home_score = int(live_info.get('home_score', 0) or 0)
+                except (ValueError, TypeError):
+                    home_score = 0
+                try:
+                    away_score = int(live_info.get('away_score', 0) or 0)
+                except (ValueError, TypeError):
+                    away_score = 0
+                diff = home_score - away_score
+                if diff > 0:
+                    score_text = f"HOME +{diff}"
+                elif diff < 0:
+                    score_text = f"AWAY +{abs(diff)}"
+                else:
+                    score_text = "TIED"
+
+                away_odds_text = "PP" if power_play else score_text
+                home_odds_text = "LIVE"
                 
             else:
                 # Generic live status
@@ -2027,29 +2116,33 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
     def is_cycle_complete(self) -> bool:
         """
         Indicate whether the plugin has completed a full display cycle.
-        
+
         For scrolling content, the cycle is complete when:
-        - Dynamic duration is enabled
-        - Scroll is complete (all content has been shown)
-        - Loop mode is disabled (if looping, cycle never completes)
-        
+        - Dynamic duration is enabled AND elapsed time exceeds dynamic duration
+        - OR scroll is complete (all content has been shown) when loop=False
+
         Returns:
             True if the cycle is complete, False otherwise
         """
         # If dynamic duration is not enabled, always return True (use fixed duration)
         if not self.supports_dynamic_duration():
             return True
-        
-        # If looping is enabled, the cycle never completes
-        if self.loop:
-            return False
-        
-        # Check if scroll is complete using ScrollHelper
-        if hasattr(self, 'scroll_helper') and self.scroll_helper:
-            return self.scroll_helper.is_scroll_complete()
-        
-        # Fallback: if no scroll helper, assume complete
-        return True
+
+        # Check if dynamic duration has been exceeded (regardless of loop setting)
+        if self._display_start_time is not None and self.dynamic_duration > 0:
+            elapsed_time = time.time() - self._display_start_time
+            if elapsed_time >= self.dynamic_duration:
+                logger.debug(f"Cycle complete: elapsed {elapsed_time:.1f}s >= dynamic duration {self.dynamic_duration}s")
+                return True
+
+        # If not looping, also check if scroll is complete
+        if not self.loop:
+            if hasattr(self, 'scroll_helper') and self.scroll_helper:
+                if self.scroll_helper.is_scroll_complete():
+                    logger.debug("Cycle complete: scroll finished (non-looping mode)")
+                    return True
+
+        return False
 
     def reset_cycle_state(self) -> None:
         """
@@ -2071,7 +2164,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
     def on_config_change(self, new_config: Dict[str, Any]) -> None:
         """
         Handle configuration changes, particularly for dynamic duration settings.
-        
+
         Args:
             new_config: The new plugin configuration dictionary
         """
@@ -2079,47 +2172,39 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         old_config = self.config.copy() if self.config else {}
         self.config = new_config
         self.odds_ticker_config = new_config
-        
+
+        # Get nested config sections (support both old flat and new nested structure)
+        display_options = new_config.get('display_options', {})
+        old_display_options = old_config.get('display_options', {})
+
         # Check if dynamic duration settings changed
-        old_dynamic = old_config.get('dynamic_duration', {})
-        if isinstance(old_dynamic, bool):
-            old_dynamic = {'enabled': old_dynamic}
-        new_dynamic = new_config.get('dynamic_duration', {})
-        if isinstance(new_dynamic, bool):
-            new_dynamic = {'enabled': new_dynamic}
-        
-        # Update dynamic duration settings if they changed
-        old_enabled = old_dynamic.get('enabled', True) if isinstance(old_dynamic, dict) else old_dynamic
-        new_enabled = new_dynamic.get('enabled', True) if isinstance(new_dynamic, dict) else new_dynamic
-        
+        old_dynamic = self._get_config_value(old_display_options, 'dynamic_duration', True, old_config)
+        new_dynamic = self._get_config_value(display_options, 'dynamic_duration', True, new_config)
+
+        if isinstance(old_dynamic, dict):
+            old_enabled = old_dynamic.get('enabled', True)
+        else:
+            old_enabled = old_dynamic
+
+        if isinstance(new_dynamic, dict):
+            new_enabled = new_dynamic.get('enabled', True)
+        else:
+            new_enabled = new_dynamic
+
         if old_enabled != new_enabled:
             self.logger.info(
                 "Dynamic duration %s for odds-ticker plugin",
                 "enabled" if new_enabled else "disabled"
             )
-        
-        # Update dynamic duration settings from config
-        self.dynamic_duration_enabled = new_config.get('dynamic_duration', True)
+
+        # Update dynamic duration settings from config (support both old and new structure)
+        self.dynamic_duration_enabled = self._get_config_value(display_options, 'dynamic_duration', True, new_config)
         if isinstance(self.dynamic_duration_enabled, dict):
             self.dynamic_duration_enabled = self.dynamic_duration_enabled.get('enabled', True)
-        
-        self.min_duration = new_config.get('min_duration', 30)
-        if isinstance(self.dynamic_duration_enabled, dict):
-            min_dur = new_config.get('dynamic_duration', {}).get('min_duration_seconds')
-            if min_dur is not None:
-                self.min_duration = min_dur
-        
-        self.max_duration = new_config.get('max_duration', 300)
-        if isinstance(new_config.get('dynamic_duration'), dict):
-            max_dur = new_config.get('dynamic_duration', {}).get('max_duration_seconds')
-            if max_dur is not None:
-                self.max_duration = max_dur
-        
-        self.duration_buffer = new_config.get('duration_buffer', 0.1)
-        if isinstance(new_config.get('dynamic_duration'), dict):
-            buffer = new_config.get('dynamic_duration', {}).get('buffer')
-            if buffer is not None:
-                self.duration_buffer = buffer
+
+        self.min_duration = self._get_config_value(display_options, 'min_duration', 30, new_config)
+        self.max_duration = self._get_config_value(display_options, 'max_duration', 300, new_config)
+        self.duration_buffer = self._get_config_value(display_options, 'duration_buffer', 0.1, new_config)
         
         # Update ScrollHelper with new settings
         if hasattr(self, 'scroll_helper') and self.scroll_helper:
@@ -2210,37 +2295,58 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             return self.live_game_update_interval
         return self.base_update_interval
     
-    def _perform_update(self):
-        """Internal method to perform the actual update."""
+    def _perform_update(self, preserve_scroll: bool = False):
+        """Internal method to perform the actual update.
+
+        Args:
+            preserve_scroll: If True, preserve current scroll position (for live game updates).
+                           If False, reset scroll to beginning (for fresh display cycles).
+        """
         current_time = time.time()
         # Dynamically determine update interval based on live games
         current_interval = self._get_current_update_interval()
         if current_time - self.last_update < current_interval:
             logger.debug(f"Odds ticker update interval not reached. Next update in {current_interval - (current_time - self.last_update)} seconds (interval: {current_interval}s, live games: {self._has_live_games()})")
             return
-        
+
         try:
-            # Reload config settings that can change at runtime
-            self.show_odds_only = self.odds_ticker_config.get('show_odds_only', False)
-            self.loop = self.odds_ticker_config.get('loop', True)
-            
+            # Reload config settings that can change at runtime (support both old and new config structure)
+            filtering = self.odds_ticker_config.get('filtering', {})
+            display_options = self.odds_ticker_config.get('display_options', {})
+            self.show_odds_only = filtering.get('show_odds_only', self.odds_ticker_config.get('show_odds_only', False))
+            self.loop = display_options.get('loop', self.odds_ticker_config.get('loop', True))
+
             logger.debug("Updating odds ticker data")
             logger.debug(f"Enabled leagues: {self.enabled_leagues}")
             logger.debug(f"Show favorite teams only: {self.show_favorite_teams_only}")
             logger.debug(f"Show odds only: {self.show_odds_only}")
             logger.debug(f"Loop: {self.loop}")
-            
+
+            # Save scroll position if preserving
+            saved_scroll_position = None
+            if preserve_scroll and hasattr(self, 'scroll_helper'):
+                saved_scroll_position = self.scroll_helper.scroll_position
+                logger.debug(f"Preserving scroll position: {saved_scroll_position}")
+
             self.games_data = self._fetch_upcoming_games()
             self.last_update = current_time
-            # Only reset scroll if looping is enabled, or if scroll hasn't completed yet
-            # This prevents resetting scroll when loop=False and scroll is already complete
-            if self.loop or not (hasattr(self, 'scroll_helper') and self.scroll_helper.is_scroll_complete()):
-                self.scroll_helper.reset_scroll()
-            self.current_game_index = 0
-            # Reset logging flags when updating data
-            self._end_reached_logged = False
-            self._insufficient_time_warning_logged = False
-            self._create_ticker_image() # Create the composite image
+
+            # Only reset scroll if not preserving and (looping is enabled or scroll hasn't completed)
+            if not preserve_scroll:
+                if self.loop or not (hasattr(self, 'scroll_helper') and self.scroll_helper.is_scroll_complete()):
+                    self.scroll_helper.reset_scroll()
+                self.current_game_index = 0
+                # Reset logging flags when updating data
+                self._end_reached_logged = False
+                self._insufficient_time_warning_logged = False
+
+            self._create_ticker_image()  # Create the composite image
+
+            # Restore scroll position if we preserved it (clamp to new image width)
+            if preserve_scroll and saved_scroll_position is not None and hasattr(self, 'scroll_helper'):
+                max_scroll = max(0, self.scroll_helper.total_scroll_width)
+                self.scroll_helper.scroll_position = min(saved_scroll_position, max_scroll)
+                logger.debug(f"Restored scroll position: {self.scroll_helper.scroll_position} (max: {max_scroll})")
             
             # Log update interval status
             next_interval = self._get_current_update_interval()
@@ -2268,7 +2374,16 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         if not self.is_enabled:
             logger.debug("Odds ticker is disabled, exiting display method.")
             return
-        
+
+        # Check if we need to update live game data (respects update interval internally)
+        # This ensures live game scores/times are refreshed during scrolling
+        current_time = time.time()
+        current_interval = self._get_current_update_interval()
+        if current_time - self.last_update >= current_interval:
+            logger.info(f"Live game update interval reached ({current_interval}s), refreshing data...")
+            # Preserve scroll position during live updates so ticker doesn't jump back
+            self._perform_update(preserve_scroll=True)
+
         # Reset display start time when force_clear is True or when starting fresh
         if force_clear or self._display_start_time is None:
             self._display_start_time = time.time()
