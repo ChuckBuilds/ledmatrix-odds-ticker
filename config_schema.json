@@ -183,7 +183,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true,
+              "default": false,
               "description": "Enable NFL odds"
             },
             "favorite_teams": {
@@ -249,7 +249,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true,
+              "default": false,
               "description": "Enable NBA odds"
             },
             "favorite_teams": {
@@ -313,7 +313,7 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true,
+              "default": false,
               "description": "Enable MLB odds"
             },
             "favorite_teams": {

@@ -61,7 +61,7 @@ class OddsDataFetcher:
                 if leagues_config.get(league_key, {}).get('enabled', False)
             ]
         else:
-            self.enabled_leagues = config.get('enabled_leagues', ['nfl', 'nba', 'mlb'])
+            self.enabled_leagues = config.get('enabled_leagues', [])
 
         # Store leagues config for easy access
         self.leagues_config = leagues_config
