@@ -1615,14 +1615,13 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 time_text = clock_text
                 
             elif sport == 'basketball':
-                # Basketball: Show quarter and time remaining
+                # Basketball: Show quarter, time remaining, and LIVE indicator
                 quarter_text = f"Q{live_info.get('quarter', 1)}"
                 clock_text = live_info.get('time_remaining', '')
-                possession_text = live_info.get('possession', '')
-                
+
                 day_text = quarter_text
                 date_text = clock_text
-                time_text = possession_text
+                time_text = "LIVE"  # Clear indicator instead of empty possession
                 
             elif sport == 'hockey':
                 # Hockey: Show period and time remaining
@@ -1760,18 +1759,33 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 home_odds_text = f"Yard: {yard_line}"
                 
             elif sport == 'basketball':
-                # Show possession for basketball
-                possession = live_info.get('possession', '')
-                
-                away_odds_text = f"Ball: {possession}"
-                home_odds_text = f"Time: {live_info.get('time_remaining', '')}"
+                # Basketball: Show score differential or just LIVE indicator
+                home_score = live_info.get('home_score', 0)
+                away_score = live_info.get('away_score', 0)
+                diff = home_score - away_score
+                if diff > 0:
+                    away_odds_text = f"HOME +{diff}"
+                elif diff < 0:
+                    away_odds_text = f"AWAY +{abs(diff)}"
+                else:
+                    away_odds_text = "TIED"
+                home_odds_text = "LIVE"
                 
             elif sport == 'hockey':
-                # Show power play status for hockey
+                # Hockey: Show power play status and score differential
                 power_play = live_info.get('power_play', False)
-                
-                away_odds_text = "Power Play" if power_play else "Even"
-                home_odds_text = f"Time: {live_info.get('time_remaining', '')}"
+                home_score = live_info.get('home_score', 0)
+                away_score = live_info.get('away_score', 0)
+                diff = home_score - away_score
+                if diff > 0:
+                    score_text = f"HOME +{diff}"
+                elif diff < 0:
+                    score_text = f"AWAY +{abs(diff)}"
+                else:
+                    score_text = "TIED"
+
+                away_odds_text = "PP" if power_play else score_text
+                home_odds_text = "LIVE"
                 
             else:
                 # Generic live status
