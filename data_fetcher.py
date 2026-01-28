@@ -190,7 +190,13 @@ class OddsDataFetcher:
         """Fetch games for a specific league."""
         try:
             logger.debug("Fetching games for %s", league_key)
-            
+
+            # MiLB is not supported by the ESPN API - skip with warning
+            league = league_config.get('league')
+            if league == 'milb':
+                logger.warning("MiLB odds fetching is not currently supported (ESPN API limitation)")
+                return []
+
             sport = league_config.get('sport')
             league = league_config.get('league')
             

@@ -482,13 +482,19 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                     # Resolve dynamic teams for this league
                     resolved_teams = self.dynamic_resolver.resolve_teams(raw_favorite_teams, league_key)
                     league_config['favorite_teams'] = resolved_teams
-                    
+
                     # Log dynamic team resolution
                     if raw_favorite_teams != resolved_teams:
                         logger.info(f"Resolved dynamic teams for {league_key}: {raw_favorite_teams} -> {resolved_teams}")
                     else:
                         logger.info(f"Favorite teams for {league_key}: {resolved_teams}")
-        
+
+        # Recompute enabled_leagues from resolved league_configs (includes fallback-enabled leagues)
+        self.enabled_leagues = [
+            league_key for league_key, league_cfg in self.league_configs.items()
+            if league_cfg.get('enabled', False)
+        ]
+
         logger.info(f"OddsTickerManager initialized with enabled leagues: {self.enabled_leagues}")
         logger.info(f"Show favorite teams only: {self.show_favorite_teams_only}")
         self.initialized = True

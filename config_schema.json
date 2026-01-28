@@ -159,7 +159,7 @@
         "show_odds_only": {
           "type": "boolean",
           "default": false,
-          "description": "Show only odds, no game details"
+          "description": "Include only games that have odds data; games without odds will be excluded from the ticker"
         },
         "sort_order": {
           "type": "string",
