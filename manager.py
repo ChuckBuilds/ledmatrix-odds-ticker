@@ -211,7 +211,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 if leagues_config.get(league_key, {}).get('enabled', False)
             ]
         else:
-            self.enabled_leagues = self.odds_ticker_config.get('enabled_leagues', ['nfl', 'nba', 'mlb'])
+            self.enabled_leagues = self.odds_ticker_config.get('enabled_leagues', [])
 
         # Display options
         self.display_duration = get_config(display_options, 'display_duration', 30)
