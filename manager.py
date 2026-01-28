@@ -2280,39 +2280,58 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             return self.live_game_update_interval
         return self.base_update_interval
     
-    def _perform_update(self):
-        """Internal method to perform the actual update."""
+    def _perform_update(self, preserve_scroll: bool = False):
+        """Internal method to perform the actual update.
+
+        Args:
+            preserve_scroll: If True, preserve current scroll position (for live game updates).
+                           If False, reset scroll to beginning (for fresh display cycles).
+        """
         current_time = time.time()
         # Dynamically determine update interval based on live games
         current_interval = self._get_current_update_interval()
         if current_time - self.last_update < current_interval:
             logger.debug(f"Odds ticker update interval not reached. Next update in {current_interval - (current_time - self.last_update)} seconds (interval: {current_interval}s, live games: {self._has_live_games()})")
             return
-        
+
         try:
             # Reload config settings that can change at runtime (support both old and new config structure)
             filtering = self.odds_ticker_config.get('filtering', {})
             display_options = self.odds_ticker_config.get('display_options', {})
             self.show_odds_only = filtering.get('show_odds_only', self.odds_ticker_config.get('show_odds_only', False))
             self.loop = display_options.get('loop', self.odds_ticker_config.get('loop', True))
-            
+
             logger.debug("Updating odds ticker data")
             logger.debug(f"Enabled leagues: {self.enabled_leagues}")
             logger.debug(f"Show favorite teams only: {self.show_favorite_teams_only}")
             logger.debug(f"Show odds only: {self.show_odds_only}")
             logger.debug(f"Loop: {self.loop}")
-            
+
+            # Save scroll position if preserving
+            saved_scroll_position = None
+            if preserve_scroll and hasattr(self, 'scroll_helper'):
+                saved_scroll_position = self.scroll_helper.scroll_position
+                logger.debug(f"Preserving scroll position: {saved_scroll_position}")
+
             self.games_data = self._fetch_upcoming_games()
             self.last_update = current_time
-            # Only reset scroll if looping is enabled, or if scroll hasn't completed yet
-            # This prevents resetting scroll when loop=False and scroll is already complete
-            if self.loop or not (hasattr(self, 'scroll_helper') and self.scroll_helper.is_scroll_complete()):
-                self.scroll_helper.reset_scroll()
-            self.current_game_index = 0
-            # Reset logging flags when updating data
-            self._end_reached_logged = False
-            self._insufficient_time_warning_logged = False
-            self._create_ticker_image() # Create the composite image
+
+            # Only reset scroll if not preserving and (looping is enabled or scroll hasn't completed)
+            if not preserve_scroll:
+                if self.loop or not (hasattr(self, 'scroll_helper') and self.scroll_helper.is_scroll_complete()):
+                    self.scroll_helper.reset_scroll()
+                self.current_game_index = 0
+                # Reset logging flags when updating data
+                self._end_reached_logged = False
+                self._insufficient_time_warning_logged = False
+
+            self._create_ticker_image()  # Create the composite image
+
+            # Restore scroll position if we preserved it (clamp to new image width)
+            if preserve_scroll and saved_scroll_position is not None and hasattr(self, 'scroll_helper'):
+                max_scroll = max(0, self.scroll_helper.total_scroll_width)
+                self.scroll_helper.scroll_position = min(saved_scroll_position, max_scroll)
+                logger.debug(f"Restored scroll position: {self.scroll_helper.scroll_position} (max: {max_scroll})")
             
             # Log update interval status
             next_interval = self._get_current_update_interval()
@@ -2340,7 +2359,16 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         if not self.is_enabled:
             logger.debug("Odds ticker is disabled, exiting display method.")
             return
-        
+
+        # Check if we need to update live game data (respects update interval internally)
+        # This ensures live game scores/times are refreshed during scrolling
+        current_time = time.time()
+        current_interval = self._get_current_update_interval()
+        if current_time - self.last_update >= current_interval:
+            logger.info(f"Live game update interval reached ({current_interval}s), refreshing data...")
+            # Preserve scroll position during live updates so ticker doesn't jump back
+            self._perform_update(preserve_scroll=True)
+
         # Reset display start time when force_clear is True or when starting fresh
         if force_clear or self._display_start_time is None:
             self._display_start_time = time.time()
