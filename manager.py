@@ -2061,29 +2061,33 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
     def is_cycle_complete(self) -> bool:
         """
         Indicate whether the plugin has completed a full display cycle.
-        
+
         For scrolling content, the cycle is complete when:
-        - Dynamic duration is enabled
-        - Scroll is complete (all content has been shown)
-        - Loop mode is disabled (if looping, cycle never completes)
-        
+        - Dynamic duration is enabled AND elapsed time exceeds dynamic duration
+        - OR scroll is complete (all content has been shown) when loop=False
+
         Returns:
             True if the cycle is complete, False otherwise
         """
         # If dynamic duration is not enabled, always return True (use fixed duration)
         if not self.supports_dynamic_duration():
             return True
-        
-        # If looping is enabled, the cycle never completes
-        if self.loop:
-            return False
-        
-        # Check if scroll is complete using ScrollHelper
-        if hasattr(self, 'scroll_helper') and self.scroll_helper:
-            return self.scroll_helper.is_scroll_complete()
-        
-        # Fallback: if no scroll helper, assume complete
-        return True
+
+        # Check if dynamic duration has been exceeded (regardless of loop setting)
+        if self._display_start_time is not None and self.dynamic_duration > 0:
+            elapsed_time = time.time() - self._display_start_time
+            if elapsed_time >= self.dynamic_duration:
+                logger.debug(f"Cycle complete: elapsed {elapsed_time:.1f}s >= dynamic duration {self.dynamic_duration}s")
+                return True
+
+        # If not looping, also check if scroll is complete
+        if not self.loop:
+            if hasattr(self, 'scroll_helper') and self.scroll_helper:
+                if self.scroll_helper.is_scroll_complete():
+                    logger.debug("Cycle complete: scroll finished (non-looping mode)")
+                    return True
+
+        return False
 
     def reset_cycle_state(self) -> None:
         """
