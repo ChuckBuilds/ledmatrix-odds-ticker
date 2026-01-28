@@ -78,79 +78,86 @@ class OddsDataFetcher:
         self._rankings_cache_timestamp = 0
         
         logger.info("OddsDataFetcher initialized")
-    
+
+    def _get_league_config(self, league_key: str) -> Dict:
+        """Get league config from either new nested or old flat structure.
+
+        Args:
+            league_key: The league identifier (e.g., 'nfl', 'nba')
+
+        Returns:
+            Dict containing the league configuration
+        """
+        if self.leagues_config:
+            return self.leagues_config.get(league_key, {})
+        return self.config.get(league_key, {})
+
     def _setup_league_configs(self) -> Dict[str, Dict]:
         """Setup league configurations with dynamic team resolution."""
-        # Helper to get league config from either new nested or old flat structure
-        def get_league_config(league_key):
-            if self.leagues_config:
-                return self.leagues_config.get(league_key, {})
-            return self.config.get(league_key, {})
-
         league_configs = {
             'nfl': {
                 'sport': 'football',
                 'league': 'nfl',
                 'logo_league': 'nfl',
                 'logo_dir': 'assets/sports/nfl_logos',
-                'favorite_teams': get_league_config('nfl').get('favorite_teams', []),
-                'enabled': get_league_config('nfl').get('enabled', False)
+                'favorite_teams': self._get_league_config('nfl').get('favorite_teams', []),
+                'enabled': self._get_league_config('nfl').get('enabled', False)
             },
             'nba': {
                 'sport': 'basketball',
                 'league': 'nba',
                 'logo_league': 'nba',
                 'logo_dir': 'assets/sports/nba_logos',
-                'favorite_teams': get_league_config('nba').get('favorite_teams', []),
-                'enabled': get_league_config('nba').get('enabled', False)
+                'favorite_teams': self._get_league_config('nba').get('favorite_teams', []),
+                'enabled': self._get_league_config('nba').get('enabled', False)
             },
             'mlb': {
                 'sport': 'baseball',
                 'league': 'mlb',
                 'logo_league': 'mlb',
                 'logo_dir': 'assets/sports/mlb_logos',
-                'favorite_teams': get_league_config('mlb').get('favorite_teams', []),
-                'enabled': get_league_config('mlb').get('enabled', False)
+                'favorite_teams': self._get_league_config('mlb').get('favorite_teams', []),
+                'enabled': self._get_league_config('mlb').get('enabled', False)
             },
             'nhl': {
                 'sport': 'hockey',
                 'league': 'nhl',
                 'logo_league': 'nhl',
                 'logo_dir': 'assets/sports/nhl_logos',
-                'favorite_teams': get_league_config('nhl').get('favorite_teams', []),
-                'enabled': get_league_config('nhl').get('enabled', False)
+                'favorite_teams': self._get_league_config('nhl').get('favorite_teams', []),
+                'enabled': self._get_league_config('nhl').get('enabled', False)
             },
             'milb': {
                 'sport': 'baseball',
                 'league': 'milb',
                 'logo_league': 'milb',
                 'logo_dir': 'assets/sports/milb_logos',
-                'favorite_teams': get_league_config('milb').get('favorite_teams', []),
-                'enabled': get_league_config('milb').get('enabled', False)
+                'favorite_teams': self._get_league_config('milb').get('favorite_teams', []),
+                'enabled': self._get_league_config('milb').get('enabled', False)
             },
             'ncaa_fb': {
                 'sport': 'football',
                 'league': 'college-football',
                 'logo_league': 'ncaa_fb',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': get_league_config('ncaa_fb').get('favorite_teams', []),
-                'enabled': get_league_config('ncaa_fb').get('enabled', False)
+                'favorite_teams': self._get_league_config('ncaa_fb').get('favorite_teams', []),
+                'enabled': self._get_league_config('ncaa_fb').get('enabled', False)
             },
             'ncaam_basketball': {
                 'sport': 'basketball',
                 'league': 'mens-college-basketball',
                 'logo_league': 'ncaam_basketball',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': get_league_config('ncaam_basketball').get('favorite_teams', []),
-                'enabled': get_league_config('ncaam_basketball').get('enabled', False)
+                'favorite_teams': self._get_league_config('ncaam_basketball').get('favorite_teams', []),
+                'enabled': self._get_league_config('ncaam_basketball').get('enabled', False)
             },
             'ncaa_baseball': {
                 'sport': 'baseball',
                 'league': 'college-baseball',
                 'logo_league': 'ncaa_baseball',
                 'logo_dir': 'assets/sports/ncaa_logos',
-                'favorite_teams': get_league_config('ncaa_baseball').get('favorite_teams', []),
-                'enabled': get_league_config('ncaa_baseball').get('enabled', False)
+                'favorite_teams': self._get_league_config('ncaa_baseball').get('favorite_teams', []),
+                'enabled': self._get_league_config('ncaa_baseball').get('enabled', False)
             }
         }
         
@@ -191,15 +198,15 @@ class OddsDataFetcher:
         try:
             logger.debug("Fetching games for %s", league_key)
 
-            # MiLB is not supported by the ESPN API - skip with warning
+            # Get sport and league from config
+            sport = league_config.get('sport')
             league = league_config.get('league')
+
+            # MiLB is not supported by the ESPN API - skip with warning
             if league == 'milb':
                 logger.warning("MiLB odds fetching is not currently supported (ESPN API limitation)")
                 return []
 
-            sport = league_config.get('sport')
-            league = league_config.get('league')
-            
             if not sport or not league:
                 logger.warning("Missing sport or league for %s", league_key)
                 return []

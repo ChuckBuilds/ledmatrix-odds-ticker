@@ -185,13 +185,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         filtering = self.odds_ticker_config.get('filtering', {})
         leagues_config = self.odds_ticker_config.get('leagues', {})
 
-        # Helper to get value from new nested structure or fall back to old flat structure
+        # Use instance method for config value retrieval
         def get_config(section, key, default, old_key=None):
-            if old_key is None:
-                old_key = key
-            if section:
-                return section.get(key, self.odds_ticker_config.get(old_key, default))
-            return self.odds_ticker_config.get(old_key, default)
+            return self._get_config_value(section, key, default, self.odds_ticker_config, old_key)
 
         # Filtering settings
         self.show_favorite_teams_only = get_config(filtering, 'show_favorite_teams_only', False)
@@ -498,6 +494,31 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         logger.info(f"OddsTickerManager initialized with enabled leagues: {self.enabled_leagues}")
         logger.info(f"Show favorite teams only: {self.show_favorite_teams_only}")
         self.initialized = True
+
+    def _get_config_value(self, section: Dict, key: str, default: Any,
+                          config_dict: Dict[str, Any], old_key: str = None) -> Any:
+        """Get config value from new nested structure or fall back to old flat structure.
+
+        Args:
+            section: The nested config section (e.g., display_options, filtering)
+            key: The key to look up in the section
+            default: Default value if key not found
+            config_dict: The full config dict for flat structure fallback
+            old_key: Optional alternative key name for backward compatibility
+
+        Returns:
+            The config value from section, config_dict, or default
+        """
+        if section:
+            value = section.get(key, config_dict.get(key, default))
+        else:
+            value = config_dict.get(key, default)
+
+        # Try old_key if value is still default and old_key is specified
+        if value == default and old_key:
+            value = config_dict.get(old_key, default)
+
+        return value
 
     def _load_custom_font_from_element_config(self, element_config: Dict[str, Any], default_size: int = 8, default_font_name: str = 'PressStart2P-Regular.ttf') -> ImageFont.FreeTypeFont:
         """
@@ -2156,15 +2177,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         display_options = new_config.get('display_options', {})
         old_display_options = old_config.get('display_options', {})
 
-        # Helper to get value from new nested structure or fall back to old flat structure
-        def get_config_value(section, key, default, config_dict):
-            if section:
-                return section.get(key, config_dict.get(key, default))
-            return config_dict.get(key, default)
-
         # Check if dynamic duration settings changed
-        old_dynamic = get_config_value(old_display_options, 'dynamic_duration', True, old_config)
-        new_dynamic = get_config_value(display_options, 'dynamic_duration', True, new_config)
+        old_dynamic = self._get_config_value(old_display_options, 'dynamic_duration', True, old_config)
+        new_dynamic = self._get_config_value(display_options, 'dynamic_duration', True, new_config)
 
         if isinstance(old_dynamic, dict):
             old_enabled = old_dynamic.get('enabled', True)
@@ -2183,13 +2198,13 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             )
 
         # Update dynamic duration settings from config (support both old and new structure)
-        self.dynamic_duration_enabled = get_config_value(display_options, 'dynamic_duration', True, new_config)
+        self.dynamic_duration_enabled = self._get_config_value(display_options, 'dynamic_duration', True, new_config)
         if isinstance(self.dynamic_duration_enabled, dict):
             self.dynamic_duration_enabled = self.dynamic_duration_enabled.get('enabled', True)
 
-        self.min_duration = get_config_value(display_options, 'min_duration', 30, new_config)
-        self.max_duration = get_config_value(display_options, 'max_duration', 300, new_config)
-        self.duration_buffer = get_config_value(display_options, 'duration_buffer', 0.1, new_config)
+        self.min_duration = self._get_config_value(display_options, 'min_duration', 30, new_config)
+        self.max_duration = self._get_config_value(display_options, 'max_duration', 300, new_config)
+        self.duration_buffer = self._get_config_value(display_options, 'duration_buffer', 0.1, new_config)
         
         # Update ScrollHelper with new settings
         if hasattr(self, 'scroll_helper') and self.scroll_helper:
