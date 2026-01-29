@@ -27,6 +27,7 @@ import time
 import logging
 import requests
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 import os
@@ -204,6 +205,9 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self.request_timeout = get_config(data_settings, 'request_timeout', 30)
         self.base_update_interval = self.update_interval  # Store base interval for switching
 
+        # Thread safety lock for concurrent access during live updates
+        self._update_lock = threading.Lock()
+
         # Build enabled_leagues from individual league enabled flags (new structure) or from enabled_leagues array (old structure)
         if leagues_config:
             self.enabled_leagues = [
@@ -221,10 +225,15 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self.broadcast_logo_height_ratio = self.odds_ticker_config.get('broadcast_logo_height_ratio', 0.8)
         self.broadcast_logo_max_width_ratio = self.odds_ticker_config.get('broadcast_logo_max_width_ratio', 0.8)
 
-        # Scroll speed configuration - prefer display_options (new structure), then display object, fallback to scroll_pixels_per_second
+        # Scroll speed configuration with backward compatibility
+        # Precedence order (highest to lowest):
+        #   1. display_options.scroll_speed/delay (CURRENT - recommended)
+        #   2. display.scroll_speed/delay (DEPRECATED - old nested format)
+        #   3. scroll_pixels_per_second (DEPRECATED - flat format)
+        #   4. scroll_speed/delay at root level (LEGACY - flat format)
         display_config = self.odds_ticker_config.get('display', {})
         if display_options and ('scroll_speed' in display_options or 'scroll_delay' in display_options):
-            # Newest format: use display_options object for granular control
+            # Priority 1: Current format - use display_options object
             self.scroll_speed = display_options.get('scroll_speed', 1.0)
             self.scroll_delay = display_options.get('scroll_delay', 0.02)
             self.scroll_pixels_per_second = display_options.get('scroll_pixels_per_second')
@@ -253,6 +262,10 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self.duration_buffer = get_config(display_options, 'duration_buffer', 0.1)
         self.dynamic_duration = 60  # Default duration in seconds
         self.total_scroll_width = 0  # Track total width for dynamic duration calculation
+
+        # Cache for dynamic duration to prevent race conditions during scroll
+        self._cached_dynamic_duration = None
+        self._duration_cache_time = 0
         
         # Initialize managers
         # BaseOddsManager is now inherited, no need for separate instance
@@ -902,26 +915,61 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 league_games = []
                 
                 if self.show_favorite_teams_only:
-                    # For each favorite team, find their next N games
+                    # Collect games for favorite teams without duplication
+                    # Fixes: games appearing twice when both teams are favorites,
+                    # and odds filter being applied after per-team limit
                     favorite_teams = league_config.get('favorite_teams', [])
                     logger.debug(f"Favorite teams for {league_key}: {favorite_teams}")
+
+                    if not favorite_teams:
+                        logger.debug(f"No favorite teams configured for {league_key}, skipping")
+                        continue
+
+                    # Sort all games by start time first for consistent priority
+                    all_games.sort(key=lambda x: x.get('start_time', datetime.max))
+
+                    # Apply odds filter EARLY if enabled (before per-team limiting)
+                    if self.show_odds_only:
+                        original_count = len(all_games)
+                        all_games = [g for g in all_games if g.get('odds') and not g.get('odds', {}).get('no_odds', False)]
+                        logger.debug(f"Odds filter: {original_count} -> {len(all_games)} games for {league_key}")
+
                     seen_game_ids = set()
-                    for team in favorite_teams:
-                        # Find games where this team is home or away
-                        team_games = [g for g in all_games if (g['home_team'] == team or g['away_team'] == team)]
-                        logger.debug(f"Found {len(team_games)} games for team {team}")
-                        # Sort by start_time
-                        team_games.sort(key=lambda x: x.get('start_time', datetime.max))
-                        # Only keep games with odds if show_odds_only is set
-                        if self.show_odds_only:
-                            team_games = [g for g in team_games if g.get('odds') and not g.get('odds', {}).get('no_odds', False)]
-                            logger.debug(f"After odds filter: {len(team_games)} games for team {team}")
-                        # Take the next N games for this team
-                        for g in team_games[:self.games_per_favorite_team]:
-                            if g['id'] not in seen_game_ids:
-                                league_games.append(g)
-                                seen_game_ids.add(g['id'])
-                    # Cap at max_games_per_league
+                    team_game_counts = {team: 0 for team in favorite_teams}
+
+                    for game in all_games:
+                        home_team = game.get('home_team', '')
+                        away_team = game.get('away_team', '')
+                        game_id = game.get('id')
+
+                        is_home_favorite = home_team in favorite_teams
+                        is_away_favorite = away_team in favorite_teams
+
+                        # Skip if neither team is a favorite
+                        if not is_home_favorite and not is_away_favorite:
+                            continue
+
+                        # Check if either favorite team still needs games
+                        home_needs = is_home_favorite and team_game_counts.get(home_team, 0) < self.games_per_favorite_team
+                        away_needs = is_away_favorite and team_game_counts.get(away_team, 0) < self.games_per_favorite_team
+
+                        # Add game if at least one team needs it and we haven't seen it
+                        if (home_needs or away_needs) and game_id not in seen_game_ids:
+                            league_games.append(game)
+                            seen_game_ids.add(game_id)
+                            # Game counts for BOTH teams if both are favorites
+                            if is_home_favorite:
+                                team_game_counts[home_team] += 1
+                            if is_away_favorite:
+                                team_game_counts[away_team] += 1
+
+                            # Check if all favorite teams are satisfied
+                            if all(team_game_counts.get(t, 0) >= self.games_per_favorite_team for t in favorite_teams):
+                                logger.debug(f"All favorite teams satisfied for {league_key}")
+                                break
+
+                    logger.debug(f"Favorite teams game counts: {team_game_counts}")
+                    # Cap at max_games_per_league as final safety limit
                     league_games = league_games[:self.max_games_per_league]
                 else:
                     # Show all games, optionally only those with odds
@@ -946,11 +994,20 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         # Apply global sort based on sort_order setting
         if self.sort_order == 'soonest':
             # True chronological order across all leagues
-            games_data.sort(key=lambda x: x.get('start_time', datetime.max))
+            # Secondary sort by team names for deterministic ordering of same-time games
+            games_data.sort(key=lambda x: (
+                x.get('start_time', datetime.max),
+                x.get('away_team', '').lower(),
+                x.get('home_team', '').lower()
+            ))
             logger.debug(f"Globally sorted {len(games_data)} games by start_time (soonest first)")
         elif self.sort_order == 'team':
-            # Sort by team name across all leagues
-            games_data.sort(key=lambda x: (x.get('home_team', ''), x.get('start_time', datetime.max)))
+            # Sort alphabetically by matchup (away @ home), then by start time
+            games_data.sort(key=lambda x: (
+                x.get('away_team', '').lower(),
+                x.get('home_team', '').lower(),
+                x.get('start_time', datetime.max)
+            ))
             logger.debug(f"Globally sorted {len(games_data)} games by team name")
         # 'league' option: keep current order (games already grouped by league)
 
@@ -975,9 +1032,10 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         max_games = self.games_per_favorite_team if self.show_favorite_teams_only else None
         all_games = []
         
-        # Optimization: Track total games found when not showing favorite teams only
+        # Optimization: Track total games found
+        # max_games_per_league applies as a safety limit in all modes
         games_found = 0
-        max_games_per_league = self.max_games_per_league if not self.show_favorite_teams_only else None
+        max_games_per_league = self.max_games_per_league
 
         sport = league_config['sport']
         leagues_to_fetch = []
@@ -994,9 +1052,12 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 continue
                 
             for date in dates:
-                # Stop if we have enough games for favorite teams
-                if self.show_favorite_teams_only and favorite_teams and all(team_games_found.get(t, 0) >= max_games for t in favorite_teams):
-                    break  # All favorite teams have enough games, stop searching
+                # Stop if we have enough games for favorite teams OR hit max games safety limit
+                if self.show_favorite_teams_only and favorite_teams:
+                    all_teams_satisfied = all(team_games_found.get(t, 0) >= max_games for t in favorite_teams)
+                    max_reached = max_games_per_league and games_found >= max_games_per_league
+                    if all_teams_satisfied or max_reached:
+                        break  # All favorite teams satisfied or max limit reached
                 # Stop if we have enough games for the league (when not showing favorite teams only)
                 if not self.show_favorite_teams_only and max_games_per_league and games_found >= max_games_per_league:
                     break  # We have enough games for this league, stop searching
@@ -1053,11 +1114,12 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                         if status in ['scheduled', 'pre-game', 'status_scheduled'] or status_state == 'in':
                             game_time = datetime.fromisoformat(event['date'].replace('Z', '+00:00'))
 
-                            # Additional safety: exclude games claiming to be "in progress" but started >24h ago
+                            # Additional safety: exclude games claiming to be "in progress" but started >48h ago
                             # (likely stale cached data from a game that should have ended)
+                            # Using 48h threshold to allow for rain delays, extra innings, etc.
                             if status_state == 'in':
                                 hours_since_start = (now - game_time).total_seconds() / 3600
-                                if hours_since_start > 24:
+                                if hours_since_start > 48:
                                     logger.warning(f"Filtering out stale 'in progress' game {game_id} that started {hours_since_start:.1f}h ago")
                                     continue
 
@@ -1222,9 +1284,23 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                     if not self.show_favorite_teams_only and max_games_per_league and games_found >= max_games_per_league:
                         break
                 except requests.exceptions.HTTPError as http_err:
-                    logger.error(f"HTTP error occurred while fetching games for {league} on {date}: {http_err}")
+                    status_code = http_err.response.status_code if http_err.response else None
+                    if status_code == 404:
+                        logger.debug(f"No games found for {league} on {date} (404)")
+                    elif status_code == 503:
+                        logger.warning(f"ESPN API unavailable for {league} on {date} (503) - will retry later")
+                    elif status_code == 429:
+                        logger.warning(f"Rate limited by ESPN API for {league} on {date} (429) - backing off")
+                    elif status_code and status_code >= 500:
+                        logger.error(f"ESPN API server error for {league} on {date}: {http_err}")
+                    else:
+                        logger.error(f"HTTP error fetching games for {league} on {date}: {http_err}")
+                except requests.exceptions.Timeout:
+                    logger.warning(f"Timeout fetching games for {league} on {date} - will retry later")
+                except requests.exceptions.ConnectionError:
+                    logger.warning(f"Connection error fetching games for {league} on {date} - network may be unavailable")
                 except Exception as e:
-                    logger.error(f"Error fetching games for {league_config.get('league', 'unknown')} on {date}: {e}", exc_info=True)
+                    logger.error(f"Unexpected error fetching games for {league_config.get('league', 'unknown')} on {date}: {e}", exc_info=True)
             if not self.show_favorite_teams_only and max_games_per_league and games_found >= max_games_per_league:
                 break
         return all_games
@@ -2117,22 +2193,43 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
     # Dynamic duration calculation is now handled by ScrollHelper
 
     def get_dynamic_duration(self) -> int:
-        """Get the calculated dynamic duration for display"""
+        """Get the calculated dynamic duration for display.
+
+        Returns cached duration during active scrolling to prevent race conditions.
+        Only fetches new data when not actively scrolling.
+        """
+        current_time = time.time()
+
+        # Return cached duration if scrolling is active and cache is fresh (5 sec)
+        if self._cached_dynamic_duration is not None:
+            cache_age = current_time - self._duration_cache_time
+            is_scrolling = hasattr(self, 'scroll_helper') and self.scroll_helper.scroll_position > 0
+            if cache_age < 5.0 and is_scrolling:
+                logger.debug(f"Returning cached duration: {self._cached_dynamic_duration}s (cache age: {cache_age:.1f}s)")
+                return self._cached_dynamic_duration
+
         # If we don't have a valid dynamic duration yet (total_scroll_width is 0),
-        # try to update the data first
+        # try to update the data first, but only if not actively scrolling
         if self.total_scroll_width == 0 and self.is_enabled:
-            logger.debug("get_dynamic_duration called but total_scroll_width is 0, attempting update...")
-            try:
-                # Force an update to get the data and calculate proper duration
-                # Bypass the update interval check for duration calculation
-                self.games_data = self._fetch_upcoming_games()
-                self.scroll_helper.reset_scroll()
-                self.current_game_index = 0
-                self._create_ticker_image() # Create the composite image
-                logger.debug(f"Force update completed, total_scroll_width: {self.total_scroll_width}px")
-            except Exception as e:
-                logger.error(f"Error updating odds ticker for dynamic duration: {e}")
-        
+            is_scrolling = hasattr(self, 'scroll_helper') and self.scroll_helper.scroll_position > 0
+            if not is_scrolling:
+                logger.debug("get_dynamic_duration called but total_scroll_width is 0, attempting update...")
+                try:
+                    # Use lock to prevent concurrent modifications
+                    with self._update_lock:
+                        # Force an update to get the data and calculate proper duration
+                        self.games_data = self._fetch_upcoming_games()
+                        self.scroll_helper.reset_scroll()
+                        self.current_game_index = 0
+                        self._create_ticker_image()
+                        logger.debug(f"Force update completed, total_scroll_width: {self.total_scroll_width}px")
+                except Exception as e:
+                    logger.error(f"Error updating odds ticker for dynamic duration: {e}")
+
+        # Cache the duration
+        self._cached_dynamic_duration = self.dynamic_duration
+        self._duration_cache_time = current_time
+
         logger.debug(f"get_dynamic_duration called, returning: {self.dynamic_duration}s")
         return self.dynamic_duration
 
@@ -2310,43 +2407,32 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self._perform_update()
 
     def _has_live_games(self) -> bool:
-        """Check if any games are live or starting soon by checking both current games_data and cached scoreboard data."""
+        """Check if any games are actually live (in progress) by checking both current games_data and cached scoreboard data."""
         # First check current games_data for live games
         if self.games_data:
-            # Check if any games are currently live
+            # Check if any games are currently live (status_state == 'in')
             if any(game.get('status_state') == 'in' for game in self.games_data):
                 return True
-            
-            # Also check if any games are starting within the next few minutes
-            # This helps catch games that just went live
-            now = datetime.now(timezone.utc)
-            for game in self.games_data:
-                start_time = game.get('start_time')
-                if start_time and isinstance(start_time, datetime):
-                    # If game starts within the next 5 minutes, treat as "live" for update purposes
-                    time_until_start = (start_time - now).total_seconds()
-                    if -300 <= time_until_start <= 300:  # Within 5 minutes before or after start
-                        return True
-        
+
         # Also check cached scoreboard data for today's games to catch live games
         # that might not be in games_data yet
         try:
             now = datetime.now(timezone.utc)
             today_str = now.strftime("%Y%m%d")
-            
+
             for league_key, config in self.league_configs.items():
                 if league_key not in self.enabled_leagues:
                     continue
-                
+
                 sport = config.get('sport')
                 league = config.get('league')
                 if not sport or not league:
                     continue
-                
+
                 # Check cached scoreboard data for today
                 cache_key = f"scoreboard_data_{sport}_{league}_{today_str}"
                 cached_data = self.cache_manager.get(cache_key, max_age=300)  # 5 min max age
-                
+
                 if cached_data:
                     events = cached_data.get('events', [])
                     for event in events:
@@ -2357,13 +2443,36 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                             return True
         except Exception as e:
             logger.debug(f"Error checking cached scoreboard for live games: {e}")
-        
+
         return False
-    
+
+    def _has_games_starting_soon(self) -> bool:
+        """Check if any games are starting within the next 5 minutes."""
+        if not self.games_data:
+            return False
+
+        now = datetime.now(timezone.utc)
+        for game in self.games_data:
+            start_time = game.get('start_time')
+            if start_time and isinstance(start_time, datetime):
+                time_until_start = (start_time - now).total_seconds()
+                # Games starting in the next 5 minutes (not already started)
+                if 0 <= time_until_start <= 300:
+                    return True
+        return False
+
     def _get_current_update_interval(self) -> int:
-        """Get the current update interval based on whether there are live games or games starting soon."""
+        """Get the current update interval based on game status.
+
+        - Live games: use live_game_update_interval (default 60s)
+        - Games starting soon: use 2x live interval (default 120s) capped at 5 min
+        - Otherwise: use base_update_interval (default 3600s)
+        """
         if self._has_live_games():
             return self.live_game_update_interval
+        elif self._has_games_starting_soon():
+            # Use a moderate interval for games about to start
+            return min(self.live_game_update_interval * 2, 300)
         return self.base_update_interval
     
     def _perform_update(self, preserve_scroll: bool = False):
@@ -2380,59 +2489,61 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
             logger.debug(f"Odds ticker update interval not reached. Next update in {current_interval - (current_time - self.last_update)} seconds (interval: {current_interval}s, live games: {self._has_live_games()})")
             return
 
-        try:
-            # Reload config settings that can change at runtime (support both old and new config structure)
-            filtering = self.odds_ticker_config.get('filtering', {})
-            display_options = self.odds_ticker_config.get('display_options', {})
-            self.show_odds_only = filtering.get('show_odds_only', self.odds_ticker_config.get('show_odds_only', False))
-            self.loop = display_options.get('loop', self.odds_ticker_config.get('loop', True))
+        # Use lock to prevent concurrent modifications during live updates
+        with self._update_lock:
+            try:
+                # Reload config settings that can change at runtime (support both old and new config structure)
+                filtering = self.odds_ticker_config.get('filtering', {})
+                display_options = self.odds_ticker_config.get('display_options', {})
+                self.show_odds_only = filtering.get('show_odds_only', self.odds_ticker_config.get('show_odds_only', False))
+                self.loop = display_options.get('loop', self.odds_ticker_config.get('loop', True))
 
-            logger.debug("Updating odds ticker data")
-            logger.debug(f"Enabled leagues: {self.enabled_leagues}")
-            logger.debug(f"Show favorite teams only: {self.show_favorite_teams_only}")
-            logger.debug(f"Show odds only: {self.show_odds_only}")
-            logger.debug(f"Loop: {self.loop}")
+                logger.debug("Updating odds ticker data")
+                logger.debug(f"Enabled leagues: {self.enabled_leagues}")
+                logger.debug(f"Show favorite teams only: {self.show_favorite_teams_only}")
+                logger.debug(f"Show odds only: {self.show_odds_only}")
+                logger.debug(f"Loop: {self.loop}")
 
-            # Save scroll position if preserving
-            saved_scroll_position = None
-            if preserve_scroll and hasattr(self, 'scroll_helper'):
-                saved_scroll_position = self.scroll_helper.scroll_position
-                logger.debug(f"Preserving scroll position: {saved_scroll_position}")
+                # Save scroll position if preserving
+                saved_scroll_position = None
+                if preserve_scroll and hasattr(self, 'scroll_helper'):
+                    saved_scroll_position = self.scroll_helper.scroll_position
+                    logger.debug(f"Preserving scroll position: {saved_scroll_position}")
 
-            self.games_data = self._fetch_upcoming_games()
-            self.last_update = current_time
+                self.games_data = self._fetch_upcoming_games()
+                self.last_update = current_time
 
-            # Only reset scroll if not preserving and (looping is enabled or scroll hasn't completed)
-            if not preserve_scroll:
-                if self.loop or not (hasattr(self, 'scroll_helper') and self.scroll_helper.is_scroll_complete()):
-                    self.scroll_helper.reset_scroll()
-                self.current_game_index = 0
-                # Reset logging flags when updating data
-                self._end_reached_logged = False
-                self._insufficient_time_warning_logged = False
+                # Only reset scroll if not preserving and (looping is enabled or scroll hasn't completed)
+                if not preserve_scroll:
+                    if self.loop or not (hasattr(self, 'scroll_helper') and self.scroll_helper.is_scroll_complete()):
+                        self.scroll_helper.reset_scroll()
+                    self.current_game_index = 0
+                    # Reset logging flags when updating data
+                    self._end_reached_logged = False
+                    self._insufficient_time_warning_logged = False
 
-            self._create_ticker_image()  # Create the composite image
+                self._create_ticker_image()  # Create the composite image
 
-            # Restore scroll position if we preserved it (clamp to new image width)
-            if preserve_scroll and saved_scroll_position is not None and hasattr(self, 'scroll_helper'):
-                max_scroll = max(0, self.scroll_helper.total_scroll_width)
-                self.scroll_helper.scroll_position = min(saved_scroll_position, max_scroll)
-                logger.debug(f"Restored scroll position: {self.scroll_helper.scroll_position} (max: {max_scroll})")
-            
-            # Log update interval status
-            next_interval = self._get_current_update_interval()
-            if self.games_data:
-                live_count = sum(1 for game in self.games_data if game.get('status_state') == 'in')
-                logger.info(f"Updated odds ticker with {len(self.games_data)} games ({live_count} live). Next update in {next_interval}s")
-                for i, game in enumerate(self.games_data[:3]):  # Log first 3 games
-                    status = "LIVE" if game.get('status_state') == 'in' else game.get('status', 'scheduled')
-                    logger.info(f"Game {i+1}: {game['away_team']} @ {game['home_team']} - {status}")
-            else:
-                logger.warning("No games found for odds ticker")
-                
-        except Exception as e:
-            logger.error(f"Error updating odds ticker: {e}", exc_info=True)
-            logger.warning(f"Odds ticker update failed, games_data may be empty: {e}")
+                # Restore scroll position if we preserved it (clamp to new image width)
+                if preserve_scroll and saved_scroll_position is not None and hasattr(self, 'scroll_helper'):
+                    max_scroll = max(0, self.scroll_helper.total_scroll_width)
+                    self.scroll_helper.scroll_position = min(saved_scroll_position, max_scroll)
+                    logger.debug(f"Restored scroll position: {self.scroll_helper.scroll_position} (max: {max_scroll})")
+
+                # Log update interval status
+                next_interval = self._get_current_update_interval()
+                if self.games_data:
+                    live_count = sum(1 for game in self.games_data if game.get('status_state') == 'in')
+                    logger.info(f"Updated odds ticker with {len(self.games_data)} games ({live_count} live). Next update in {next_interval}s")
+                    for i, game in enumerate(self.games_data[:3]):  # Log first 3 games
+                        status = "LIVE" if game.get('status_state') == 'in' else game.get('status', 'scheduled')
+                        logger.info(f"Game {i+1}: {game['away_team']} @ {game['home_team']} - {status}")
+                else:
+                    logger.warning("No games found for odds ticker")
+
+            except Exception as e:
+                logger.error(f"Error updating odds ticker: {e}", exc_info=True)
+                logger.warning(f"Odds ticker update failed, games_data may be empty: {e}")
 
     def display(self, display_mode: str = None, force_clear: bool = False):
         """Display the odds ticker."""

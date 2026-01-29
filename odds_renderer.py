@@ -86,22 +86,16 @@ class OddsRenderer:
         self.scroll_speed = config.get('scroll_speed', 2)
         self.scroll_delay = config.get('scroll_delay', 0.05)
         self.scroll_pixels_per_second = config.get('scroll_pixels_per_second', 18.0)
-        self.scroll_target_fps = config.get('scroll_target_fps', 100.0)
-        self.scroll_mode = config.get('scroll_mode', 'one_shot')
-        self.scroll_direction = config.get('scroll_direction', 'left')
         self.loop = config.get('loop', True)
         self.show_channel_logos = config.get('show_channel_logos', True)
         self.broadcast_logo_height_ratio = config.get('broadcast_logo_height_ratio', 0.8)
         self.broadcast_logo_max_width_ratio = config.get('broadcast_logo_max_width_ratio', 0.8)
-        
+
         # Dynamic duration settings
         self.dynamic_duration_enabled = config.get('dynamic_duration', True)
         self.min_duration = config.get('min_duration', 30)
         self.max_duration = config.get('max_duration', 300)
         self.duration_buffer = config.get('duration_buffer', 0.1)
-        
-        # Performance settings
-        self.enable_scroll_metrics = config.get('enable_scroll_metrics', False)
         
         # State variables
         self.scroll_position = 0
@@ -291,11 +285,11 @@ class OddsRenderer:
         # Handle broadcast logo sizing
         broadcast_logo_col_width = 0
         if broadcast_logo:
-            b_logo_h = int(height * 0.8)  # broadcast_logo_height_ratio
+            b_logo_h = int(height * self.broadcast_logo_height_ratio)
             ratio = b_logo_h / broadcast_logo.height
             b_logo_w = int(broadcast_logo.width * ratio)
-            
-            max_width = int(width * 0.8)  # broadcast_logo_max_width_ratio
+
+            max_width = int(width * self.broadcast_logo_max_width_ratio)
             if b_logo_w > max_width:
                 ratio = max_width / broadcast_logo.width
                 b_logo_w = max_width
