@@ -997,7 +997,13 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                     request_date_obj = datetime.strptime(date, "%Y%m%d").date()
 
                     if request_date_obj < current_date_obj:
-                        ttl = 86400 * 30  # 30 days for past dates
+                        # For yesterday, use short TTL to ensure stale live games are updated
+                        # For older dates, use longer TTL since games are definitely final
+                        days_ago = (current_date_obj - request_date_obj).days
+                        if days_ago == 1:
+                            ttl = 3600  # 1 hour for yesterday (to catch games that finished late)
+                        else:
+                            ttl = 86400 * 30  # 30 days for older dates
                     elif request_date_obj == current_date_obj:
                         ttl = 300  # 5 minutes for today (shorter to catch live games)
                     else:
@@ -1027,11 +1033,23 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                         game_id = event['id']
                         status = event['status']['type']['name'].lower()
                         status_state = event['status']['type']['state'].lower()
-                        
+
+                        # Explicitly exclude completed games (defense against stale cached data)
+                        if status_state == 'post':
+                            continue
+
                         # Include both scheduled and live games
                         if status in ['scheduled', 'pre-game', 'status_scheduled'] or status_state == 'in':
                             game_time = datetime.fromisoformat(event['date'].replace('Z', '+00:00'))
-                            
+
+                            # Additional safety: exclude games claiming to be "in progress" but started >24h ago
+                            # (likely stale cached data from a game that should have ended)
+                            if status_state == 'in':
+                                hours_since_start = (now - game_time).total_seconds() / 3600
+                                if hours_since_start > 24:
+                                    logger.warning(f"Filtering out stale 'in progress' game {game_id} that started {hours_since_start:.1f}h ago")
+                                    continue
+
                             # For live games, include them regardless of time window
                             # For scheduled games, check if they're within the future window
                             if status_state == 'in' or (now <= game_time <= future_window):
