@@ -942,7 +942,18 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 
             except Exception as e:
                 logger.error(f"Error fetching games for {league_key}: {e}", exc_info=True)
-        
+
+        # Apply global sort based on sort_order setting
+        if self.sort_order == 'soonest':
+            # True chronological order across all leagues
+            games_data.sort(key=lambda x: x.get('start_time', datetime.max))
+            logger.debug(f"Globally sorted {len(games_data)} games by start_time (soonest first)")
+        elif self.sort_order == 'team':
+            # Sort by team name across all leagues
+            games_data.sort(key=lambda x: (x.get('home_team', ''), x.get('start_time', datetime.max)))
+            logger.debug(f"Globally sorted {len(games_data)} games by team name")
+        # 'league' option: keep current order (games already grouped by league)
+
         logger.info(f"Total games found: {len(games_data)}")
         if games_data:
             logger.debug(f"Sample game data keys: {list(games_data[0].keys())}")
@@ -2239,6 +2250,48 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                 self.max_duration,
                 self.duration_buffer * 100
             )
+
+        # Update scroll speed and delay settings
+        display_config = new_config.get('display', {})
+
+        # Read new scroll settings (support both old and new config structure)
+        if display_options and ('scroll_speed' in display_options or 'scroll_delay' in display_options):
+            new_scroll_speed = display_options.get('scroll_speed', self.scroll_speed)
+            new_scroll_delay = display_options.get('scroll_delay', self.scroll_delay)
+        elif display_config and ('scroll_speed' in display_config or 'scroll_delay' in display_config):
+            new_scroll_speed = display_config.get('scroll_speed', self.scroll_speed)
+            new_scroll_delay = display_config.get('scroll_delay', self.scroll_delay)
+        else:
+            new_scroll_speed = new_config.get('scroll_speed', self.scroll_speed)
+            new_scroll_delay = new_config.get('scroll_delay', self.scroll_delay)
+
+        # Update scroll speed if changed
+        if new_scroll_speed != self.scroll_speed:
+            self.set_scroll_speed(new_scroll_speed)
+
+        # Update scroll delay if changed
+        if new_scroll_delay != self.scroll_delay:
+            self.set_scroll_delay(new_scroll_delay)
+
+        # Update target_fps
+        new_target_fps = self._get_config_value(display_options, 'target_fps', self.target_fps, new_config)
+        if new_target_fps != self.target_fps:
+            self.target_fps = new_target_fps
+            if hasattr(self, 'scroll_helper') and self.scroll_helper and hasattr(self.scroll_helper, 'set_target_fps'):
+                self.scroll_helper.set_target_fps(self.target_fps)
+            self.logger.info(f"Target FPS updated to: {self.target_fps}")
+
+        # Update loop setting
+        new_loop = self._get_config_value(display_options, 'loop', self.loop, new_config)
+        if new_loop != self.loop:
+            self.loop = new_loop
+            self.logger.info(f"Loop setting updated to: {self.loop}")
+
+        # Update show_channel_logos
+        new_show_logos = self._get_config_value(display_options, 'show_channel_logos', self.show_channel_logos, new_config)
+        if new_show_logos != self.show_channel_logos:
+            self.show_channel_logos = new_show_logos
+            self.logger.info(f"Show channel logos updated to: {self.show_channel_logos}")
 
     def update(self):
         """Update odds ticker data."""
