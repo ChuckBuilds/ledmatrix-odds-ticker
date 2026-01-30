@@ -928,11 +928,8 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                     # Sort all games by start time first for consistent priority
                     all_games.sort(key=lambda x: x.get('start_time', datetime.max))
 
-                    # Apply odds filter EARLY if enabled (before per-team limiting)
-                    if self.show_odds_only:
-                        original_count = len(all_games)
-                        all_games = [g for g in all_games if g.get('odds') and not g.get('odds', {}).get('no_odds', False)]
-                        logger.debug(f"Odds filter: {original_count} -> {len(all_games)} games for {league_key}")
+                    # NOTE: Odds filter moved AFTER favorite team selection to preserve favorites
+                    # even when odds aren't available yet (e.g., early morning games)
 
                     seen_game_ids = set()
                     team_game_counts = {team: 0 for team in favorite_teams}
@@ -969,6 +966,17 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                                 break
 
                     logger.debug(f"Favorite teams game counts: {team_game_counts}")
+
+                    # Apply odds filter AFTER favorite team selection (with fallback)
+                    # This preserves favorite team games even when odds aren't available yet
+                    if self.show_odds_only and league_games:
+                        games_with_odds = [g for g in league_games if g.get('odds') and not g.get('odds', {}).get('no_odds', False)]
+                        if games_with_odds:
+                            logger.debug(f"Odds filter on favorites: {len(league_games)} -> {len(games_with_odds)} games for {league_key}")
+                            league_games = games_with_odds
+                        else:
+                            logger.info(f"No favorite team games have odds yet for {league_key}, showing {len(league_games)} games without odds filter")
+
                     # Cap at max_games_per_league as final safety limit
                     league_games = league_games[:self.max_games_per_league]
                 else:
