@@ -222,8 +222,8 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
         self.target_fps = get_config(display_options, 'target_fps', 120)
         self.loop = get_config(display_options, 'loop', True)
         self.show_channel_logos = get_config(display_options, 'show_channel_logos', True)
-        self.broadcast_logo_height_ratio = self.odds_ticker_config.get('broadcast_logo_height_ratio', 0.8)
-        self.broadcast_logo_max_width_ratio = self.odds_ticker_config.get('broadcast_logo_max_width_ratio', 0.8)
+        self.broadcast_logo_height_ratio = get_config(display_options, 'broadcast_logo_height_ratio', 0.8)
+        self.broadcast_logo_max_width_ratio = get_config(display_options, 'broadcast_logo_max_width_ratio', 0.8)
 
         # Scroll speed configuration with backward compatibility
         # Precedence order (highest to lowest):
@@ -1292,7 +1292,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                     elif status_code == 429:
                         logger.warning(f"Rate limited by ESPN API for {league} on {date} (429) - backing off")
                     elif status_code and status_code >= 500:
-                        logger.error(f"ESPN API server error for {league} on {date}: {http_err}")
+                        logger.error(f"ESPN API server error for {league} on {date}: {http_err}", exc_info=True)
                     else:
                         logger.error(f"HTTP error fetching games for {league} on {date}: {http_err}")
                 except requests.exceptions.Timeout:
@@ -2224,7 +2224,7 @@ class OddsTickerPlugin(BasePlugin, BaseOddsManager):
                         self._create_ticker_image()
                         logger.debug(f"Force update completed, total_scroll_width: {self.total_scroll_width}px")
                 except Exception as e:
-                    logger.error(f"Error updating odds ticker for dynamic duration: {e}")
+                    logger.exception(f"Error updating odds ticker for dynamic duration: {e}")
 
         # Cache the duration
         self._cached_dynamic_duration = self.dynamic_duration
