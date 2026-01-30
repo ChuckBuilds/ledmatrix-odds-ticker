@@ -49,7 +49,6 @@ class OddsDataFetcher:
         self.request_timeout = data_settings.get('request_timeout', config.get('request_timeout', 30))
         self.future_fetch_days = data_settings.get('future_fetch_days', config.get('future_fetch_days', 7))
         self.show_favorite_teams_only = filtering.get('show_favorite_teams_only', config.get('show_favorite_teams_only', False))
-        self.games_per_favorite_team = filtering.get('games_per_favorite_team', config.get('games_per_favorite_team', 1))
         self.max_games_per_league = filtering.get('max_games_per_league', config.get('max_games_per_league', 5))
         self.fetch_odds = data_settings.get('fetch_odds', config.get('fetch_odds', True))
 

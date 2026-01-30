@@ -85,6 +85,20 @@
           "type": "boolean",
           "default": true,
           "description": "Show broadcast channel logos"
+        },
+        "broadcast_logo_height_ratio": {
+          "type": "number",
+          "default": 0.8,
+          "minimum": 0.1,
+          "maximum": 1.0,
+          "description": "Height ratio for broadcast channel logos (0.8 = 80% of display height)"
+        },
+        "broadcast_logo_max_width_ratio": {
+          "type": "number",
+          "default": 0.8,
+          "minimum": 0.1,
+          "maximum": 2.0,
+          "description": "Maximum width ratio for broadcast channel logos relative to display width"
         }
       },
       "additionalProperties": false
